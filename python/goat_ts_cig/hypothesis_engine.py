@@ -1,0 +1,58 @@
+"""
+Hypothesis Engine: suggest links from similarity and tension (conflict edges).
+"""
+from goat_ts_cig.llm_stub import generate as llm_generate
+
+
+def generate_hypotheses(kg, rg=None, id_map=None, similarity_threshold: float = 0.3, use_llm: bool = False, config: dict = None):
+    """
+    Detect weak connections (similar but no edge) and tension (conflict edges with act mismatch).
+    id_map: list of SQLite node ids in Rust index order (from to_rust_graph). Required if rg is used.
+    Returns list of {"from": id, "to": id, "reason": str, "score": float}.
+    """
+    config = config or {}
+    hypotheses = []
+    data = kg.to_json()
+    nodes = {n["id"]: n for n in data["nodes"]}
+    edge_set = {(e["from_id"], e["to_id"]) for e in data["edges"]}
+
+    # Similarity-based: use Rust if available
+    if rg is not None and id_map and hasattr(rg, "find_similar"):
+        for i in range(min(rg.node_count(), len(id_map))):
+            sqlite_id = id_map[i]
+            similar = rg.find_similar(i, similarity_threshold, use_activation_weight=True)
+            for rust_j in similar:
+                if rust_j < len(id_map):
+                    to_id = id_map[rust_j]
+                    if sqlite_id != to_id and (sqlite_id, to_id) not in edge_set and (to_id, sqlite_id) not in edge_set:
+                        hypotheses.append({
+                            "from": sqlite_id,
+                            "to": to_id,
+                            "reason": "similarity > threshold",
+                            "score": similarity_threshold,
+                        })
+
+    # Tension-based: conflict edges with high activation difference
+    tension_thresh = config.get("tension_threshold", 0.3)
+    for e in data["edges"]:
+        if e.get("type") != "conflict":
+            continue
+        a, b = e["from_id"], e["to_id"]
+        na, nb = nodes.get(a), nodes.get(b)
+        if not na or not nb:
+            continue
+        act_a = na.get("activation", 0) or 0
+        act_b = nb.get("activation", 0) or 0
+        if abs(act_a - act_b) > tension_thresh:
+            hypotheses.append({
+                "from": a,
+                "to": b,
+                "reason": "tension (conflict edge, activation mismatch)",
+                "score": abs(act_a - act_b),
+            })
+
+    if use_llm and config.get("llm"):
+        for h in hypotheses:
+            h["natural_language"] = llm_generate(f"Suggest link: {h['from']} -> {h['to']}")
+
+    return hypotheses

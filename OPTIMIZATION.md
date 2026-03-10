@@ -1,0 +1,7 @@
+# Optimization Notes (CIG-APP / GOAT-TS)
+
+- **Rust wave engine**: Propagation uses a single-tick copy-update to avoid read/write conflicts. For graphs with ≥100 nodes, `rayon` parallelizes the per-node activation update (incoming sum).
+- **Convergence**: `propagate_until_convergence` in `wave_engine.rs` stops when activation delta < epsilon (not wired in default full_ts_cycle; can be enabled for early exit).
+- **Memory**: Python KG sync uses batched SQLite reads (default batch 5000) in `to_rust_graph` to limit peak RAM. Rust structs use `u32`/`f64`; switching to `u16`/`f32` would reduce footprint for very large graphs but requires binding and Python sync changes.
+- **Profiling**: Use `cargo build --release` and `maturin develop --release` for production. Python: `python -m cProfile -s cumtime run.py --seed x` to find hot paths.
+- **Target**: Aim for <1s full cycle on 1000 nodes on low-end hardware (e.g. Intel Pentium Silver).

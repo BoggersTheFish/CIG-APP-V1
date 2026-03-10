@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+rust/target/
+*.db
+*.log
+.venv/
+venv/
+dist/
+*.egg
+.env

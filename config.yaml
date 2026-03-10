@@ -1,0 +1,13 @@
+graph:
+  path: data/knowledge_graph.db
+wave:
+  ticks: 10
+  decay: 0.9
+  activation_threshold: 0.5
+similarity_threshold: 0.3
+tension_threshold: 0.3
+llm: true
+online:
+  enabled: true
+  max_requests_per_run: 30
+  timeout_seconds: 10
