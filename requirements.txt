@@ -7,4 +7,5 @@ requests>=2.28
 beautifulsoup4>=4.11
 duckduckgo-search>=4.0
 # Optional for graph export (step 6): pip install graphviz (and Graphviz binaries from https://graphviz.org)
-# Optional for matplotlib engine: pip install matplotlib networkx
+# Heavy optional: matplotlib (dashboard/viz). Use only if needed.
+# Optional: pip install matplotlib networkx
