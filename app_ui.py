@@ -1642,12 +1642,14 @@ elif step == "6. Advanced Features":
             help="Controls how much autonomous query generation prefers lower-activation / novel nodes.",
         )
         st.session_state.adv_curiosity_bias = curiosity
-        llm_reflection = bool(adv.get("llm_reflection", False))
+        if "adv_llm_reflection" not in st.session_state:
+            st.session_state.adv_llm_reflection = bool(adv.get("llm_reflection", False))
         llm_reflection = st.checkbox(
             "Use LLM reflection at the end of autonomous run (if Ollama enabled)",
-            value=llm_reflection,
+            value=st.session_state.adv_llm_reflection,
             key="adv_llm_reflection",
         )
+        st.session_state.adv_llm_reflection = llm_reflection
         multi_seed_list = adv.get("multi_seed") or []
         if not isinstance(multi_seed_list, list):
             multi_seed_list = []
@@ -1673,7 +1675,10 @@ elif step == "6. Advanced Features":
 
     with st.expander("Monitoring"):
         mon = config.get("monitoring") or {}
-        show_progress = st.checkbox("Show progress during run", value=bool(mon.get("show_progress", False)), key="mon_show_progress", help="Show progress when running pipeline or autonomous.")
+        if "mon_show_progress" not in st.session_state:
+            st.session_state.mon_show_progress = bool(mon.get("show_progress", False))
+        show_progress = st.checkbox("Show progress during run", value=st.session_state.mon_show_progress, key="mon_show_progress", help="Show progress when running pipeline or autonomous.")
+        st.session_state.mon_show_progress = show_progress
         if st.button("Save monitoring settings", key="save_mon", disabled=_is_busy()):
             _set_busy(True)
             try:
