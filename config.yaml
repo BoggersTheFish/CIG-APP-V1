@@ -24,3 +24,6 @@ advanced_autonomous:
   multi_seed: []
 monitoring:
   show_progress: true
+advanced:
+  embeddings:
+    enabled: false

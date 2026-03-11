@@ -32,6 +32,38 @@ def generate_hypotheses(kg, rg=None, id_map=None, similarity_threshold: float = 
                             "score": similarity_threshold,
                         })
 
+    # Embeddings-based similarity when enabled (fallback or supplement)
+    emb_enabled = (config.get("advanced") or {}).get("embeddings") or {}
+    if emb_enabled.get("enabled"):
+        try:
+            from goat_ts_cig.embeddings import available as emb_available, embed_batch
+            if emb_available():
+                node_list = data.get("nodes", [])
+                if len(node_list) <= 200:
+                    labels = [(n.get("label") or "").strip() or f"id{n['id']}" for n in node_list]
+                    vecs = embed_batch(labels)
+                    for i in range(len(node_list)):
+                        for j in range(i + 1, len(node_list)):
+                            a_id, b_id = node_list[i]["id"], node_list[j]["id"]
+                            if (a_id, b_id) in edge_set or (b_id, a_id) in edge_set:
+                                continue
+                            # cosine similarity
+                            va, vb = vecs[i], vecs[j]
+                            dot = sum(x * y for x, y in zip(va, vb))
+                            na = sum(x * x for x in va) ** 0.5
+                            nb = sum(x * x for x in vb) ** 0.5
+                            if na > 0 and nb > 0:
+                                sim = dot / (na * nb)
+                                if sim >= similarity_threshold:
+                                    hypotheses.append({
+                                        "from": a_id,
+                                        "to": b_id,
+                                        "reason": "embedding similarity > threshold",
+                                        "score": float(sim),
+                                    })
+        except Exception:
+            pass
+
     # Tension-based: conflict edges with high activation difference
     tension_thresh = config.get("tension_threshold", 0.3)
     for e in data["edges"]:

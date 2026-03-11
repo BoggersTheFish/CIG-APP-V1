@@ -215,6 +215,7 @@ def _check_optional_deps(config: dict) -> list[tuple[str, bool, list[str] | None
         _optional_dep_spec("NetworkX", "networkx", ["networkx"]),
         _optional_dep_spec("Matplotlib", "matplotlib", ["matplotlib"]),
         _optional_dep_spec("BeautifulSoup (search)", "bs4", None),
+        _optional_dep_spec("Sentence Transformers (embeddings)", "sentence_transformers", ["sentence-transformers"]),
     ]:
         ok = importlib.util.find_spec(mod) is not None
         result.append((name, ok, pip))
@@ -707,6 +708,19 @@ elif step == "2. Configuration":
         )
         config["similarity_threshold"] = sim_thresh
         config["tension_threshold"] = tension_thresh
+        emb_enabled = st.checkbox(
+            "Enable Embeddings (similarity via all-MiniLM-L6-v2)",
+            value=bool(((config.get("advanced") or {}).get("embeddings") or {}).get("enabled", False)),
+            help="Use lightweight embeddings for hypothesis similarity when Sentence Transformers is installed.",
+            key="cfg_embeddings",
+        )
+        if not any(x[0] == "Sentence Transformers (embeddings)" and x[1] for x in _check_optional_deps(config)):
+            st.caption("Install Sentence Transformers: pip install sentence-transformers (see Feature status in sidebar).")
+        if "advanced" not in config:
+            config["advanced"] = {}
+        if "embeddings" not in config["advanced"]:
+            config["advanced"]["embeddings"] = {}
+        config["advanced"]["embeddings"]["enabled"] = emb_enabled
 
     with st.expander("LLM (optional)"):
         use_llm = st.checkbox(

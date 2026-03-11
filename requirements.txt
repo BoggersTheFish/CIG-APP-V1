@@ -9,3 +9,5 @@ duckduckgo-search>=4.0
 # Optional for graph export (step 6): pip install graphviz (and Graphviz binaries from https://graphviz.org)
 # Heavy optional: matplotlib (dashboard/viz). Use only if needed.
 # Optional: pip install matplotlib networkx
+# Optional (embeddings): pip install sentence-transformers
+sentence-transformers>=2.2
