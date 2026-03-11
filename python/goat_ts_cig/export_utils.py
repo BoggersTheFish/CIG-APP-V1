@@ -1,9 +1,31 @@
-"""Export graph to CSV and CIG result to JSON."""
+"""Export graph to CSV, GraphML, and CIG result to JSON."""
 from __future__ import annotations
 
 import csv
 import json
 import os
+
+
+def to_graphml(kg, path: str) -> str:
+    """Export knowledge graph to GraphML via networkx. Returns output path."""
+    import networkx as nx
+    data = kg.to_json()
+    G = nx.Graph()
+    for n in data.get("nodes", []):
+        G.add_node(
+            n["id"],
+            label=n.get("label", ""),
+            mass=float(n.get("mass", 1.0)),
+            activation=float(n.get("activation", 0)),
+            state=n.get("state", ""),
+        )
+    for e in data.get("edges", []):
+        G.add_edge(e["from_id"], e["to_id"], type=e.get("type", "relates"), weight=float(e.get("weight", 1.0)))
+    d = os.path.dirname(path)
+    if d:
+        os.makedirs(d, exist_ok=True)
+    nx.write_graphml(G, path)
+    return path
 
 
 def export_graph_csv(kg, dir_path: str) -> list[str]:

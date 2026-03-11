@@ -1521,6 +1521,28 @@ elif step == "6. Advanced Features":
                     prog.progress(1.0, text="Done.")
                 finally:
                     _set_busy(False)
+        graphml_path = st.text_input("GraphML output path", value=os.path.join(export_dir, "graph.graphml"), key="export_graphml_path", help="Export full graph as GraphML.")
+        if st.button("Export graph to GraphML", key="btn_graphml", disabled=_is_busy()):
+            _set_busy(True)
+            try:
+                from goat_ts_cig.knowledge_graph import KnowledgeGraph
+                from goat_ts_cig.export_utils import to_graphml
+                kg = KnowledgeGraph(db_path_export)
+                out_path = graphml_path.strip() or os.path.join(export_dir, "graph.graphml")
+                to_graphml(kg, out_path)
+                kg.close()
+                st.success(f"Exported to {out_path}")
+                try:
+                    with open(out_path, "rb") as f_gml:
+                        st.download_button("Download GraphML", data=f_gml.read(), file_name=os.path.basename(out_path), mime="application/xml", key="download_graphml")
+                except Exception:
+                    pass
+                _append_log(f"Exported graph to GraphML: {out_path}")
+            except Exception as ex:
+                st.error(str(ex))
+                _append_log(f"Export to GraphML failed: {ex}")
+            finally:
+                _set_busy(False)
 
     with st.expander("Advanced autonomous"):
         adv = config.get("advanced_autonomous") or {}
