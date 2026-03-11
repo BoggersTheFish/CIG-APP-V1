@@ -1,5 +1,6 @@
 """
 Autonomous exploration: multi-cycle query generation, optional web search, ingest, TS propagation.
+Phase 17, Steps 75-78: reflection cycles, multi-seed from config, curiosity bias for novel nodes.
 """
 from __future__ import annotations
 
@@ -147,7 +148,8 @@ def run_autonomous_explore(
         return {"error": f"Failed to open graph at {db_path}: {e}", "config": config}
 
     if seeds is None:
-        seeds = [seed_query]
+        adv_seeds = (config.get("advanced_autonomous") or {}).get("multi_seed") or []
+        seeds = [seed_query] + [s for s in adv_seeds if isinstance(s, str) and s.strip()]
     adv = config.get("advanced_autonomous") or {}
     reflection = int(adv.get("reflection_cycles", 0))
 

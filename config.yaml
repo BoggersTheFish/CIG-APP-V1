@@ -1,3 +1,6 @@
+# Phase 13: Advanced Features shell (master toggle for optional deps)
+advanced_features_enabled: false
+
 graph:
   path: data/knowledge_graph.db
 wave:
@@ -19,9 +22,12 @@ llm_ollama:
   use_for_autonomous: true
 export:
   default_dir: data/exports
+# Phase 17: Autonomous modes (reflection, multi-seed, curiosity bias)
 advanced_autonomous:
   reflection_cycles: 3
   multi_seed: []
+  curiosity_bias: 0.0
+  llm_reflection: false
 monitoring:
   show_progress: true
 advanced:

@@ -412,7 +412,38 @@ with st.sidebar.expander("6. Advanced Features", expanded=False):
     if _gml_path and os.path.isfile(_gml_path):
         with open(_gml_path, "r", encoding="utf-8") as _f:
             st.download_button("Download GraphML", data=_f.read(), file_name="graph.graphml", mime="application/xml", key="adv_dl_graphml")
-    # Save advanced settings to config (Phase 14: include Ollama host/model)
+    # ----- Phase 17: Autonomous settings (Steps 75-78) -----
+    st.markdown("---")
+    st.caption("Autonomous exploration")
+    _adv_auto = _config_for_adv.get("advanced_autonomous") or {}
+    st.number_input(
+        "Reflection cycles (extra propagation runs per cycle)",
+        min_value=0,
+        max_value=10,
+        value=int(_adv_auto.get("reflection_cycles", 3)),
+        key="adv_reflection_cycles",
+    )
+    _multi_seed_str = "\n".join(_adv_auto.get("multi_seed") or [])
+    st.text_area(
+        "Multi-seed (one per line, used with main seed in Full autonomous)",
+        value=_multi_seed_str,
+        height=80,
+        key="adv_multi_seed",
+    )
+    st.slider(
+        "Curiosity bias (0 = high activation, 1 = novel/low-activation nodes)",
+        0.0,
+        1.0,
+        value=float(_adv_auto.get("curiosity_bias", 0.0)),
+        step=0.1,
+        key="adv_curiosity_bias",
+    )
+    st.checkbox(
+        "LLM reflection (Ollama summary after autonomous run)",
+        value=bool(_adv_auto.get("llm_reflection", False)),
+        key="adv_llm_reflection",
+    )
+    # Save advanced settings to config (Phase 14 + Phase 17)
     if st.button("Save advanced settings", key="save_adv_settings", disabled=_is_busy()):
         cfg = load_config()
         cfg["advanced_features_enabled"] = st.session_state.get("adv_features_enabled", False)
@@ -421,6 +452,12 @@ with st.sidebar.expander("6. Advanced Features", expanded=False):
         _sel = st.session_state.get("adv_ollama_model_sel", "llama2")
         _model = (st.session_state.get("adv_ollama_model_custom") or "").strip() if _sel == "Other" else _sel
         cfg["llm_ollama"]["model"] = _model or "llama2"
+        cfg.setdefault("advanced_autonomous", {})
+        cfg["advanced_autonomous"]["reflection_cycles"] = int(st.session_state.get("adv_reflection_cycles", 3))
+        _ms = (st.session_state.get("adv_multi_seed") or "").strip()
+        cfg["advanced_autonomous"]["multi_seed"] = [ln.strip() for ln in _ms.splitlines() if ln.strip()]
+        cfg["advanced_autonomous"]["curiosity_bias"] = float(st.session_state.get("adv_curiosity_bias", 0.0))
+        cfg["advanced_autonomous"]["llm_reflection"] = bool(st.session_state.get("adv_llm_reflection", False))
         err = save_config(cfg)
         if err:
             st.sidebar.error(err)
@@ -463,6 +500,11 @@ if mode == "Full Run (All Features)":
         if st.button("Re-Check Deps", key="recheck_deps"):
             st.rerun()
 
+# Phase 17: Optional autonomous run (Full mode only)
+run_autonomous = False
+if mode == "Full Run (All Features)":
+    run_autonomous = st.checkbox("Run autonomous (5 cycles)", value=False, key="run_autonomous_cb")
+
 run_disabled = _is_busy() or (mode == "Full Run (All Features)" and not all_deps_ok)
 
 if st.button("Run", type="primary", disabled=run_disabled, key="btn_run"):
@@ -473,9 +515,8 @@ if st.button("Run", type="primary", disabled=run_disabled, key="btn_run"):
         seed_val = seed.strip()
         with st.status("Running...", expanded=True):
             try:
-                from goat_ts_cig.main import run_pipeline
                 if mode == "Dry Run (Basic)":
-                    # Core only: TS propagation, graph, CIG outputs. No LLM, embeddings, vector, PDF, online.
+                    from goat_ts_cig.main import run_pipeline
                     dry_config = copy.deepcopy(config)
                     dry_config["llm"] = False
                     dry_config.setdefault("llm_ollama", {})["enabled"] = False
@@ -489,8 +530,21 @@ if st.button("Run", type="primary", disabled=run_disabled, key="btn_run"):
                         config=dry_config,
                         ticks_override=10,
                     )
+                elif run_autonomous:
+                    from goat_ts_cig.autonomous_explore import run_autonomous_explore
+                    adv = config.get("advanced_autonomous") or {}
+                    seeds_list = [seed_val] + [s for s in (adv.get("multi_seed") or []) if isinstance(s, str) and s.strip()]
+                    result = run_autonomous_explore(
+                        seed_val,
+                        config_path=CONFIG_PATH,
+                        config=config,
+                        max_cycles=5,
+                        max_queries_per_cycle=3,
+                        online_override=False if not all_deps_ok else None,
+                        seeds=seeds_list if len(seeds_list) > 1 else None,
+                    )
                 else:
-                    # Full: use config as-is (ticks=10 hardcoded)
+                    from goat_ts_cig.main import run_pipeline
                     result = run_pipeline(
                         seed=seed_val,
                         config_path=CONFIG_PATH,
@@ -526,6 +580,14 @@ if result:
                     st.write(f"**{h.get('from', '')}** → **{h.get('to', '')}**")
                     if h.get("natural_language"):
                         st.caption(h["natural_language"])
+        # Phase 17: Autonomous cycles summary and LLM reflection
+        if result.get("cycles"):
+            with st.expander("Cycles summary"):
+                for i, cy in enumerate(result["cycles"]):
+                    st.markdown(f"**Cycle {i+1}** (seed={cy.get('seed', '')}): queries = {cy.get('queries', [])}, ingested = {cy.get('ingested_count', 0)}")
+        if result.get("reflection_suggestion"):
+            with st.expander("LLM reflection"):
+                st.write(result["reflection_suggestion"])
         # Graph image (Full only)
         if mode == "Full Run (All Features)":
             try:
