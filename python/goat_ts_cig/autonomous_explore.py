@@ -4,6 +4,7 @@ Autonomous exploration: multi-cycle query generation, optional web search, inges
 from __future__ import annotations
 
 import os
+import time
 import yaml
 
 
@@ -120,6 +121,7 @@ def run_autonomous_explore(
     online_override: bool | None = None,
     seeds: list[str] | None = None,
     backup_before_run: bool = False,
+    cooldown_seconds: int = 0,
 ) -> dict:
     """
     Run autonomous exploration: multiple cycles of query generation, optional web search,
@@ -180,6 +182,8 @@ def run_autonomous_explore(
                             kg.ingest_text(text)
                             ingested_count += 1
                     total_requests += 1
+                    if cooldown_seconds > 0:
+                        time.sleep(cooldown_seconds)
             cycles_log.append({"seed": current_seed, "queries": queries, "ingested_count": ingested_count})
 
             result = run_pipeline(
@@ -253,6 +257,7 @@ def run_autonomous_one_cycle(
     total_requests: int,
     cycles_log: list,
     reflection: int,
+    cooldown_seconds: int = 0,
 ) -> tuple[dict, int, list]:
     """
     Run exactly one autonomous cycle (queries, optional search/ingest, pipeline, reflection).
@@ -277,6 +282,8 @@ def run_autonomous_one_cycle(
                     kg.ingest_text(text)
                     ingested_count += 1
             total_requests += 1
+            if cooldown_seconds > 0:
+                time.sleep(cooldown_seconds)
     cycles_log = list(cycles_log) + [{"seed": current_seed, "queries": queries, "ingested_count": ingested_count}]
     result = run_pipeline(current_seed, config_path=config_path, config=config, kg=kg)
     if result.get("error"):

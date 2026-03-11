@@ -1153,6 +1153,15 @@ elif step == "5. Autonomous Exploration":
     max_requests_5 = st.slider("Max Search Requests per Run", 5, 50, value=st.session_state.autonomous_max_requests, key="autonomous_max_requests", help="Cap on HTTP search requests per autonomous run.")
     st.session_state.autonomous_max_requests = max_requests_5
     timeout_5 = (config.get("online") or {}).get("timeout_seconds", 10)
+    if "rate_limit_enabled" not in st.session_state:
+        st.session_state.rate_limit_enabled = False
+    rate_limit_enabled = st.toggle("Enable Rate Limiting", value=st.session_state.rate_limit_enabled, key="rate_limit_enabled", help="Pause between each web search to avoid abuse.")
+    st.session_state.rate_limit_enabled = rate_limit_enabled
+    if "cooldown_sec" not in st.session_state:
+        st.session_state.cooldown_sec = 2
+    cooldown_sec = st.number_input("Cooldown seconds between searches", 0, 30, value=st.session_state.cooldown_sec, key="cooldown_sec", help="Seconds to wait after each search when rate limiting is enabled.")
+    st.session_state.cooldown_sec = cooldown_sec
+    cooldown_seconds_5 = int(cooldown_sec) if rate_limit_enabled else 0
 
     # Human-in-loop: run one cycle at a time and wait for Continue
     from goat_ts_cig.autonomous_explore import run_autonomous_one_cycle
@@ -1182,6 +1191,7 @@ elif step == "5. Autonomous Exploration":
             result, total_req, cycles_log = run_autonomous_one_cycle(
                 CONFIG_PATH, config, c_seed, c_cycle, max_q, use_online_val,
                 max_requests_5, timeout_5, hilo.get("total_requests", 0), hilo.get("cycles_log", []), reflection_5,
+                cooldown_seconds=cooldown_seconds_5,
             )
             if result.get("error"):
                 st.session_state["last_autonomous_result"] = result
@@ -1236,6 +1246,7 @@ elif step == "5. Autonomous Exploration":
                 result, tr, cl = run_autonomous_one_cycle(
                     CONFIG_PATH, config, current_seed, 0, max_q, use_online_val,
                     max_requests_5, timeout_5, 0, [], reflection_5,
+                    cooldown_seconds=cooldown_seconds_5,
                 )
                 st.session_state["last_autonomous_result"] = result
                 if result.get("error"):
@@ -1273,6 +1284,7 @@ elif step == "5. Autonomous Exploration":
                             online_override=online_override,
                             seeds=seeds_5 if len(seeds_5) > 1 else None,
                             backup_before_run=enable_backup,
+                            cooldown_seconds=cooldown_seconds_5,
                         )
                     except Exception as e:
                         st.exception(e)
