@@ -1102,6 +1102,7 @@ elif step == "5. Autonomous Exploration":
     max_q = st.slider("Max queries per cycle", 1, 5, 3, key="max_q")
     use_online_5 = st.checkbox("Use online search (if available)", value=bool(online_ok), key="use_online_5")
     human_loop = st.toggle("Human-in-Loop (pause after each cycle)", value=False, key="human_loop_5")
+    enable_backup = st.toggle("Enable Backup (before autonomous run)", value=False, key="backup_5")
 
     show_progress_5 = (config.get("monitoring") or {}).get("show_progress", False)
     adv_5 = config.get("advanced_autonomous") or {}
@@ -1114,6 +1115,21 @@ elif step == "5. Autonomous Exploration":
     # Human-in-loop: run one cycle at a time and wait for Continue
     from goat_ts_cig.autonomous_explore import run_autonomous_one_cycle
     hilo = st.session_state.get("autonomous_human_loop") or {}
+    db_path_5 = (config.get("graph") or {}).get("path", "data/knowledge_graph.db")
+    if (db_path_5 or "").strip() != ":memory:":
+        from goat_ts_cig.undo import has_backup, restore_db
+        if has_backup(db_path_5) and st.button("Restore graph from backup", key="restore_5", disabled=_is_busy()):
+            _set_busy(True)
+            try:
+                if restore_db(db_path_5):
+                    st.success("Graph restored from backup.")
+                    _append_log("Restored graph from backup.")
+                else:
+                    st.error("Restore failed.")
+            finally:
+                _set_busy(False)
+            st.rerun()
+
     if human_loop and hilo and st.button("Continue to next cycle", key="hilo_continue", disabled=_is_busy()):
         _set_busy(True)
         try:
@@ -1167,6 +1183,11 @@ elif step == "5. Autonomous Exploration":
         elif human_loop:
             _set_busy(True)
             try:
+                if enable_backup and (db_path_5 or "").strip() != ":memory:":
+                    from goat_ts_cig.undo import backup_db
+                    bp = backup_db(db_path_5)
+                    if bp:
+                        _append_log(f"Backup created: {bp}")
                 _append_log("Starting: autonomous exploration (human-in-loop).")
                 st.session_state["autonomous_human_loop"] = {"cycle": 0, "seed_idx": 0, "seeds": seeds_5, "total_requests": 0, "cycles_log": []}
                 current_seed = seeds_5[0]
@@ -1208,6 +1229,7 @@ elif step == "5. Autonomous Exploration":
                             max_queries_per_cycle=max_q,
                             online_override=online_override,
                             seeds=seeds_5 if len(seeds_5) > 1 else None,
+                            backup_before_run=enable_backup,
                         )
                     except Exception as e:
                         st.exception(e)

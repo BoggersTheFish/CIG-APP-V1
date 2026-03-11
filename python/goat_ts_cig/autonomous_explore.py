@@ -119,6 +119,7 @@ def run_autonomous_explore(
     max_queries_per_cycle: int = 3,
     online_override: bool | None = None,
     seeds: list[str] | None = None,
+    backup_before_run: bool = False,
 ) -> dict:
     """
     Run autonomous exploration: multiple cycles of query generation, optional web search,
@@ -132,6 +133,12 @@ def run_autonomous_explore(
     if config is None:
         config = _load_config(config_path)
     db_path = config.get("graph", {}).get("path", "data/knowledge_graph.db")
+    if backup_before_run and db_path and db_path.strip() != ":memory:":
+        try:
+            from goat_ts_cig.undo import backup_db
+            backup_db(db_path)
+        except Exception:
+            pass
     try:
         kg = KnowledgeGraph(db_path)
     except Exception as e:
