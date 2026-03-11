@@ -61,6 +61,27 @@ def test_autonomous_integration_local_only():
     assert "cig" in result and "graph" in result
 
 
+def test_progress_callback_phase18():
+    """Phase 18: run_pipeline calls progress_callback with (current, total, message)."""
+    from goat_ts_cig.main import run_pipeline
+    calls = []
+
+    def cb(current, total, message):
+        calls.append((current, total, message))
+
+    config = {
+        "graph": {"path": ":memory:"},
+        "wave": {"ticks": 3, "decay": 0.9, "activation_threshold": 0.5},
+    }
+    result = run_pipeline("prog", config=config, progress_callback=cb)
+    assert result.get("error") is None
+    assert len(calls) >= 2
+    assert calls[0][2] == "starting"
+    assert calls[-1][2] == "done"
+    assert calls[0][0] == 0 and calls[0][1] == 3
+    assert calls[-1][0] == 3 and calls[-1][1] == 3
+
+
 def test_export_integration():
     """Integration: pipeline result + export CSV/JSON (as in Advanced Features UI)."""
     import tempfile

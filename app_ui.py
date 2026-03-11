@@ -8,8 +8,10 @@ import copy
 import io
 import json
 import os
+import queue
 import subprocess
 import sys
+import threading
 import time
 
 import streamlit as st
@@ -28,6 +30,9 @@ st.set_page_config(
 )
 
 CONFIG_PATH = os.path.join(ROOT, "config.yaml")
+
+# Phase 18: Progress holder for pipeline callback (thread writes, main reads)
+_progress_holder = [0, 1, ""]
 
 if "cig_operation_in_progress" not in st.session_state:
     st.session_state.cig_operation_in_progress = False
@@ -468,6 +473,45 @@ with st.sidebar.expander("6. Advanced Features", expanded=False):
 # ----- Main: single page -----
 st.title("CIG-APP: Contextual Information Generator")
 
+config = load_config()
+# Phase 18: Verbose monitoring toggle (persist in session_state)
+verbose_monitoring = st.checkbox(
+    "Verbose monitoring (show progress and stats)",
+    value=st.session_state.get("verbose_monitoring", bool((config.get("monitoring") or {}).get("show_progress", False))),
+    key="verbose_monitoring",
+)
+
+# Phase 18: Show "Running..." and progress when single-pipeline is in background thread
+if st.session_state.get("pipeline_running"):
+    _pipe_thread = st.session_state.get("_pipeline_thread")
+    _thread_done = _pipe_thread is None or not getattr(_pipe_thread, "is_alive", lambda: False)()
+    if _thread_done:
+        _set_busy(False)
+        st.session_state.pipeline_running = False
+        st.session_state["_pipeline_thread"] = None
+        _q = st.session_state.pop("_pipeline_queue", None)
+        if _q is not None:
+            try:
+                _res, _err = _q.get_nowait()
+                if _err is not None:
+                    st.session_state["last_run_result"] = {"error": str(_err)}
+                else:
+                    st.session_state["last_run_result"] = _res
+            except queue.Empty:
+                st.session_state["last_run_result"] = {"error": "Pipeline finished but no result on queue."}
+        st.rerun()
+    else:
+        _start = st.session_state.get("pipeline_start_time") or time.time()
+        _elapsed = int(time.time() - _start)
+        st.info(f"⏳ **Running pipeline...** ({_elapsed} s) — please wait.")
+        _cur, _tot, _msg = _progress_holder[0], _progress_holder[1], _progress_holder[2]
+        if _tot and _tot > 0:
+            st.progress(_cur / _tot, text=_msg or f"Step {_cur}/{_tot}")
+        if verbose_monitoring:
+            st.caption(f"Phase: {_msg} | Elapsed: {_elapsed} s")
+        time.sleep(1)
+        st.rerun()
+
 # Seed (persisted via key="seed_input")
 seed = st.text_input(
     "Enter your seed concept (e.g., artificial intelligence)",
@@ -482,7 +526,6 @@ mode = st.radio(
     key="mode_radio",
 )
 
-config = load_config()
 full_deps = check_full_deps(config) if mode == "Full Run (All Features)" else []
 all_deps_ok = all(ok for _, ok, _ in full_deps) if full_deps else True
 
@@ -511,26 +554,11 @@ if st.button("Run", type="primary", disabled=run_disabled, key="btn_run"):
     if not seed.strip():
         st.error("Enter a seed concept.")
     else:
-        _set_busy(True)
         seed_val = seed.strip()
-        with st.status("Running...", expanded=True):
-            try:
-                if mode == "Dry Run (Basic)":
-                    from goat_ts_cig.main import run_pipeline
-                    dry_config = copy.deepcopy(config)
-                    dry_config["llm"] = False
-                    dry_config.setdefault("llm_ollama", {})["enabled"] = False
-                    dry_config.setdefault("online", {})["enabled"] = False
-                    dry_config.setdefault("advanced", {})["embeddings"] = {"enabled": False}
-                    dry_config.setdefault("vector", {})["enabled"] = False
-                    dry_config.setdefault("ingestion", {})["pdf_enabled"] = False
-                    result = run_pipeline(
-                        seed=seed_val,
-                        config_path=CONFIG_PATH,
-                        config=dry_config,
-                        ticks_override=10,
-                    )
-                elif run_autonomous:
+        if run_autonomous:
+            _set_busy(True)
+            with st.status("Running autonomous exploration...", expanded=True):
+                try:
                     from goat_ts_cig.autonomous_explore import run_autonomous_explore
                     adv = config.get("advanced_autonomous") or {}
                     seeds_list = [seed_val] + [s for s in (adv.get("multi_seed") or []) if isinstance(s, str) and s.strip()]
@@ -543,20 +571,61 @@ if st.button("Run", type="primary", disabled=run_disabled, key="btn_run"):
                         online_override=False if not all_deps_ok else None,
                         seeds=seeds_list if len(seeds_list) > 1 else None,
                     )
-                else:
+                    st.session_state["last_run_result"] = result
+                except Exception as e:
+                    st.session_state["last_run_result"] = {"error": str(e)}
+                finally:
+                    _set_busy(False)
+            st.rerun()
+        else:
+            # Phase 18: Single pipeline in background thread so we can show progress
+            _progress_holder[0], _progress_holder[1], _progress_holder[2] = 0, 1, "starting"
+
+            def _progress_cb(c, t, m):
+                _progress_holder[0], _progress_holder[1], _progress_holder[2] = c, t, m
+
+            def _run_bg():
+                res, err = None, None
+                try:
                     from goat_ts_cig.main import run_pipeline
-                    result = run_pipeline(
-                        seed=seed_val,
-                        config_path=CONFIG_PATH,
-                        config=config,
-                        ticks_override=10,
-                    )
-                st.session_state["last_run_result"] = result
-            except Exception as e:
-                st.session_state["last_run_result"] = {"error": str(e)}
-            finally:
-                _set_busy(False)
-        st.rerun()
+                    if mode == "Dry Run (Basic)":
+                        dry_config = copy.deepcopy(config)
+                        dry_config["llm"] = False
+                        dry_config.setdefault("llm_ollama", {})["enabled"] = False
+                        dry_config.setdefault("online", {})["enabled"] = False
+                        dry_config.setdefault("advanced", {})["embeddings"] = {"enabled": False}
+                        dry_config.setdefault("vector", {})["enabled"] = False
+                        dry_config.setdefault("ingestion", {})["pdf_enabled"] = False
+                        res = run_pipeline(
+                            seed=seed_val,
+                            config_path=CONFIG_PATH,
+                            config=dry_config,
+                            ticks_override=10,
+                            progress_callback=_progress_cb,
+                        )
+                    else:
+                        res = run_pipeline(
+                            seed=seed_val,
+                            config_path=CONFIG_PATH,
+                            config=config,
+                            ticks_override=10,
+                            progress_callback=_progress_cb,
+                        )
+                except Exception as e:
+                    err = e
+                try:
+                    _q.put((res, err))
+                except Exception:
+                    pass
+
+            _q = queue.Queue()
+            st.session_state["_pipeline_queue"] = _q
+            _t = threading.Thread(target=_run_bg)
+            st.session_state["_pipeline_thread"] = _t
+            _t.start()
+            st.session_state.pipeline_running = True
+            st.session_state.pipeline_start_time = time.time()
+            st.rerun()
 
 # ----- Output area -----
 result = st.session_state.get("last_run_result")
@@ -565,6 +634,11 @@ if result:
         st.error(result["error"])
     else:
         st.success(f"Done. Seed **{result.get('seed', '')}** (node_id={result.get('node_id', '')}).")
+        if st.session_state.get("verbose_monitoring", False):
+            g = result.get("graph") or {}
+            nodes = g.get("nodes") or []
+            edges = g.get("edges") or []
+            st.caption(f"**Stats:** {len(nodes)} nodes, {len(edges)} edges")
         cig = result.get("cig") or {}
         # Text: idea map, context expansion
         if cig.get("idea_map"):
