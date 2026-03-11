@@ -29,3 +29,5 @@ advanced:
     enabled: false
 vector:
   enabled: false
+ingestion:
+  pdf_enabled: true

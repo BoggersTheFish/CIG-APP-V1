@@ -215,6 +215,26 @@ class KnowledgeGraph:
                 self.add_edge(prev_id, node_id, "relates", 1.0)
             prev_id = node_id
 
+    def ingest_pdf(self, file) -> str:
+        """
+        Extract text from PDF and ingest via ingest_text.
+        file: path (str) or file-like with .read(). Returns extracted text or error message.
+        """
+        try:
+            from PyPDF2 import PdfReader
+            if hasattr(file, "read"):
+                reader = PdfReader(file)
+            else:
+                reader = PdfReader(file)
+            text = "".join(
+                (page.extract_text() or "") for page in reader.pages
+            )
+            if text.strip():
+                self.ingest_text(text.strip())
+            return text.strip() or "(no text extracted)"
+        except Exception as e:
+            return f"Error: {e}"
+
     def to_json(self) -> dict:
         """Export nodes and edges as dicts for JSON serialization."""
         nodes_cur = self.conn.execute(

@@ -831,6 +831,28 @@ elif step == "3. Run & Explore":
         if up:
             ingest_text = up.read().decode("utf-8", errors="replace")
 
+    if (config.get("ingestion") or {}).get("pdf_enabled", True):
+        st.markdown("**Ingest PDF**")
+        pdf_up = st.file_uploader("Upload a PDF", type=["pdf"], key="pdf_upload")
+        if pdf_up and st.button("Ingest PDF", key="btn_ingest_pdf", disabled=_is_busy()):
+            _set_busy(True)
+            try:
+                from goat_ts_cig.knowledge_graph import KnowledgeGraph
+                db_path = (config.get("graph") or {}).get("path", "data/knowledge_graph.db")
+                kg = KnowledgeGraph(db_path)
+                out = kg.ingest_pdf(pdf_up)
+                kg.close()
+                if out.startswith("Error:"):
+                    st.error(out)
+                else:
+                    st.success(f"PDF ingested. Extracted {len(out)} characters.")
+                    _append_log(f"Ingested PDF: {len(out)} chars.")
+            except Exception as e:
+                st.exception(e)
+                _append_log(f"PDF ingest failed: {e}")
+            finally:
+                _set_busy(False)
+
     ticks_override = None
     if st.checkbox("Override wave ticks for this run"):
         ticks_override = st.number_input("Ticks", min_value=1, max_value=500, value=10)
