@@ -794,18 +794,25 @@ elif step == "3. Run & Explore":
     st.header("3. Run & Explore")
     st.markdown("Set a seed concept, optionally ingest text, then run the CIG pipeline.")
     config = load_config()
-
+    if "run_seed" not in st.session_state:
+        st.session_state.run_seed = "AI"
     seed = st.text_input(
         "Seed concept",
-        value="AI",
+        value=st.session_state.run_seed,
+        key="run_seed",
         help="Starting node label for exploration (added to graph if missing).",
     ).strip()
+    st.session_state.run_seed = seed
 
+    if "run_autonomous_mode" not in st.session_state:
+        st.session_state.run_autonomous_mode = False
     autonomous_mode = st.checkbox(
         "Autonomous Exploration Mode",
-        value=False,
+        value=st.session_state.run_autonomous_mode,
+        key="run_autonomous_mode",
         help="Run multiple cycles: generate queries → optional web search → ingest → TS propagation.",
     )
+    st.session_state.run_autonomous_mode = autonomous_mode
     online_ok = False
     run_local_only = True
     if autonomous_mode:
@@ -817,10 +824,16 @@ elif step == "3. Run & Explore":
             st.warning(online_msg)
             run_local_only = st.checkbox("Run in local-only mode (no web search)", value=True, key="run_local_3")
 
+    if "run_ingest_option" not in st.session_state:
+        st.session_state.run_ingest_option = "None"
+    _opts = ["None", "Paste text", "Upload file"]
+    _idx = _opts.index(st.session_state.run_ingest_option) if st.session_state.run_ingest_option in _opts else 0
     ingest_option = st.radio(
         "Ingest text (optional)",
-        ["None", "Paste text", "Upload file"],
+        _opts,
+        index=_idx,
         horizontal=True,
+        key="run_ingest_option",
         help="Add text to the graph before propagation; words become nodes.",
     )
     ingest_text = None
@@ -853,9 +866,16 @@ elif step == "3. Run & Explore":
             finally:
                 _set_busy(False)
 
+    if "run_override_ticks" not in st.session_state:
+        st.session_state.run_override_ticks = False
+    if "run_ticks_override_val" not in st.session_state:
+        st.session_state.run_ticks_override_val = 10
+    override_ticks = st.checkbox("Override wave ticks for this run", value=st.session_state.run_override_ticks, key="run_override_ticks")
+    st.session_state.run_override_ticks = override_ticks
     ticks_override = None
-    if st.checkbox("Override wave ticks for this run"):
-        ticks_override = st.number_input("Ticks", min_value=1, max_value=500, value=10)
+    if override_ticks:
+        ticks_override = st.number_input("Ticks", min_value=1, max_value=500, value=st.session_state.run_ticks_override_val, key="run_ticks_override_val")
+        st.session_state.run_ticks_override_val = ticks_override
 
     show_progress = (config.get("monitoring") or {}).get("show_progress", False)
 
@@ -1097,12 +1117,30 @@ elif step == "5. Autonomous Exploration":
     else:
         run_local_only_5 = False
 
-    seed_auto = st.text_input("Seed query", value="AI", key="seed_auto").strip()
-    max_cycles = st.slider("Number of cycles", 1, 10, 5, key="max_cycles")
-    max_q = st.slider("Max queries per cycle", 1, 5, 3, key="max_q")
-    use_online_5 = st.checkbox("Use online search (if available)", value=bool(online_ok), key="use_online_5")
-    human_loop = st.toggle("Human-in-Loop (pause after each cycle)", value=False, key="human_loop_5")
-    enable_backup = st.toggle("Enable Backup (before autonomous run)", value=False, key="backup_5")
+    if "seed_auto" not in st.session_state:
+        st.session_state.seed_auto = "AI"
+    seed_auto = st.text_input("Seed query", value=st.session_state.seed_auto, key="seed_auto").strip()
+    st.session_state.seed_auto = seed_auto
+    if "max_cycles" not in st.session_state:
+        st.session_state.max_cycles = 5
+    max_cycles = st.slider("Number of cycles", 1, 10, st.session_state.max_cycles, key="max_cycles")
+    st.session_state.max_cycles = max_cycles
+    if "max_q" not in st.session_state:
+        st.session_state.max_q = 3
+    max_q = st.slider("Max queries per cycle", 1, 5, st.session_state.max_q, key="max_q")
+    st.session_state.max_q = max_q
+    if "use_online_5" not in st.session_state:
+        st.session_state.use_online_5 = bool(online_ok)
+    use_online_5 = st.checkbox("Use online search (if available)", value=st.session_state.use_online_5, key="use_online_5")
+    st.session_state.use_online_5 = use_online_5
+    if "human_loop_5" not in st.session_state:
+        st.session_state.human_loop_5 = False
+    human_loop = st.toggle("Human-in-Loop (pause after each cycle)", value=st.session_state.human_loop_5, key="human_loop_5")
+    st.session_state.human_loop_5 = human_loop
+    if "backup_5" not in st.session_state:
+        st.session_state.backup_5 = False
+    enable_backup = st.toggle("Enable Backup (before autonomous run)", value=st.session_state.backup_5, key="backup_5")
+    st.session_state.backup_5 = enable_backup
 
     show_progress_5 = (config.get("monitoring") or {}).get("show_progress", False)
     adv_5 = config.get("advanced_autonomous") or {}
@@ -1569,17 +1607,23 @@ elif step == "6. Advanced Features":
     with st.expander("Advanced autonomous"):
         adv = config.get("advanced_autonomous") or {}
         reflection_default = int(adv.get("reflection_cycles") or 0)
-        reflection = st.number_input("Reflection cycles (0–5)", 0, 5, value=min(5, max(0, reflection_default)), key="adv_reflection", help="Extra propagation steps per autonomous cycle.")
+        if "adv_reflection" not in st.session_state:
+            st.session_state.adv_reflection = min(5, max(0, reflection_default))
+        reflection = st.number_input("Reflection cycles (0–5)", 0, 5, value=st.session_state.adv_reflection, key="adv_reflection", help="Extra propagation steps per autonomous cycle.")
+        st.session_state.adv_reflection = reflection
         curiosity_default = float((adv.get("curiosity_bias") or 0.0) or 0.0)
+        if "adv_curiosity_bias" not in st.session_state:
+            st.session_state.adv_curiosity_bias = max(0.0, min(1.0, curiosity_default))
         curiosity = st.slider(
             "Curiosity bias (0 = stable, 1 = exploratory)",
             min_value=0.0,
             max_value=1.0,
-            value=max(0.0, min(1.0, curiosity_default)),
+            value=st.session_state.adv_curiosity_bias,
             step=0.05,
             key="adv_curiosity_bias",
             help="Controls how much autonomous query generation prefers lower-activation / novel nodes.",
         )
+        st.session_state.adv_curiosity_bias = curiosity
         llm_reflection = bool(adv.get("llm_reflection", False))
         llm_reflection = st.checkbox(
             "Use LLM reflection at the end of autonomous run (if Ollama enabled)",
