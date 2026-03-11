@@ -1418,7 +1418,8 @@ elif step == "6. Advanced Features":
                                         st.success(f"Saved to {out_resolved}")
                                         _append_log(f"Exported subgraph PNG to {out_resolved}")
                                         try:
-                                            st.image(out_resolved, caption="Current Graph Preview", use_container_width=True)
+                                            # Inline preview confirmed
+                                            st.image(out_resolved, caption="Graph Visualization Preview", use_container_width=True)
                                             with open(out_resolved, "rb") as f:
                                                 st.download_button(
                                                     "Download PNG",
