@@ -119,6 +119,6 @@ Added license (MIT), sidebar Feature status and one-click installs, export previ
 
 This project is licensed under the MIT License — see [LICENSE](LICENSE). Copyright (c) 2026 BoggersTheFish.
 
-## Suggested GitHub Topics
+## Recommended GitHub Topics
 
-knowledge-graph streamlit rust-python local-ai thinking-waves sqlite ollama vector-search autonomous-exploration
+knowledge-graph streamlit rust-python local-ai thinking-waves sqlite ollama vector-search autonomous-exploration embeddings pdf-ingestion
