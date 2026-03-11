@@ -69,10 +69,21 @@ def load_config() -> dict:
             config = yaml.safe_load(f) or {}
     except Exception:
         config = {}
+    # Phase 14: Env overrides for Ollama (OLLAMA_HOST/MODEL or CIG_OLLAMA_*)
+    default_host = "http://127.0.0.1:11434"
+    default_model = "llama2"
+    if os.environ.get("OLLAMA_HOST", "").strip():
+        default_host = os.environ.get("OLLAMA_HOST", default_host).strip()
+    elif os.environ.get("CIG_OLLAMA_HOST", "").strip():
+        default_host = os.environ.get("CIG_OLLAMA_HOST", default_host).strip()
+    if os.environ.get("OLLAMA_MODEL", "").strip():
+        default_model = os.environ.get("OLLAMA_MODEL", default_model).strip()
+    elif os.environ.get("CIG_OLLAMA_MODEL", "").strip():
+        default_model = os.environ.get("CIG_OLLAMA_MODEL", default_model).strip()
     config.setdefault("llm_ollama", {}).update({
         "enabled": config.get("llm_ollama", {}).get("enabled", False),
-        "host": config.get("llm_ollama", {}).get("host", "http://127.0.0.1:11434"),
-        "model": config.get("llm_ollama", {}).get("model", "llama2"),
+        "host": config.get("llm_ollama", {}).get("host", default_host),
+        "model": config.get("llm_ollama", {}).get("model", default_model),
     })
     return config
 
@@ -191,6 +202,44 @@ def check_full_deps(config: dict) -> list[tuple[str, bool, str]]:
     return result
 
 
+def check_advanced_deps(config: dict) -> list[tuple[str, bool, str | None]]:
+    """Phase 13: Dependency checks for Advanced Features (Ollama, Graphviz, Matplotlib).
+    Returns list of (display_name, ok, pip_cmd_or_none). None = no pip (e.g. Ollama = external).
+    """
+    result: list[tuple[str, bool, str | None]] = []
+
+    # Ollama (local LLM) — detected via API, no pip
+    ollama_ok = False
+    try:
+        import requests as _req
+        host = (config.get("llm_ollama") or {}).get("host", "http://127.0.0.1:11434")
+        r = _req.get(host.rstrip("/") + "/api/tags", timeout=2)
+        ollama_ok = r.status_code == 200
+    except Exception:
+        pass
+    result.append(("Ollama (local LLM)", ollama_ok, None))
+
+    # Graphviz (Python) — pip install graphviz
+    gv_ok = False
+    try:
+        import graphviz  # noqa: F401
+        gv_ok = True
+    except Exception:
+        pass
+    result.append(("Graphviz (Python)", gv_ok, "pip install graphviz"))
+
+    # Matplotlib — pip install matplotlib
+    mpl_ok = False
+    try:
+        import matplotlib  # noqa: F401
+        mpl_ok = True
+    except Exception:
+        pass
+    result.append(("Matplotlib", mpl_ok, "pip install matplotlib"))
+
+    return result
+
+
 # ----- Sidebar: theme only -----
 if "theme" not in st.session_state:
     st.session_state.theme = "light"
@@ -207,6 +256,87 @@ st.markdown(
     f'<style>section[data-testid="stSidebar"] {{ background-color: {_bg}; color: {_fg}; }} .stApp {{ background-color: {_bg}; color: {_fg}; }}</style>',
     unsafe_allow_html=True,
 )
+
+# ----- Sidebar: 6. Advanced Features (Phase 13, Steps 59-62) -----
+_config_for_adv = load_config()
+_adv_deps = check_advanced_deps(_config_for_adv)
+with st.sidebar.expander("6. Advanced Features", expanded=False):
+    st.caption("Optional deps for LLM, graph viz, and exports.")
+    for name, ok, pip_cmd in _adv_deps:
+        st.write(f"{'✅' if ok else '❌'} {name}")
+    # Phase 14: Ollama not detected warning
+    _ollama_ok = next((ok for n, ok, _ in _adv_deps if "Ollama" in n), False)
+    if not _ollama_ok:
+        st.warning("Ollama not detected. Install from https://ollama.ai and start the server for LLM features.")
+    # Ollama host and model (Phase 14, Steps 63-67)
+    _ollama_cfg = _config_for_adv.get("llm_ollama") or {}
+    st.text_input(
+        "Ollama host",
+        value=_ollama_cfg.get("host", "http://127.0.0.1:11434"),
+        key="adv_ollama_host",
+        help="e.g. http://127.0.0.1:11434",
+    )
+    _model_opts = ["llama2", "llama3.2", "mistral", "phi3", "Other"]
+    _cur_model = _ollama_cfg.get("model", "llama2")
+    _model_idx = _model_opts.index(_cur_model) if _cur_model in _model_opts else _model_opts.index("Other")
+    st.selectbox(
+        "Ollama model",
+        _model_opts,
+        index=_model_idx,
+        key="adv_ollama_model_sel",
+    )
+    if st.session_state.get("adv_ollama_model_sel") == "Other":
+        st.text_input("Custom model name", value=_cur_model if _cur_model not in _model_opts else "", key="adv_ollama_model_custom")
+    # Master toggle (persisted in config)
+    adv_enabled = st.checkbox(
+        "Enable advanced features",
+        value=_config_for_adv.get("advanced_features_enabled", False),
+        key="adv_features_enabled",
+        help="Use Ollama, Graphviz, Matplotlib when available.",
+    )
+    # Install buttons for pip-installable deps
+    for name, ok, pip_cmd in _adv_deps:
+        if ok or not pip_cmd:
+            continue
+        # pip_cmd is e.g. "pip install graphviz"
+        pkg = pip_cmd.replace("pip install", "").strip() if pip_cmd else None
+        if pkg and st.button(f"Install {name}", key=f"adv_install_{name.replace(' ', '_')}", disabled=_is_busy()):
+            _set_busy(True)
+            try:
+                r = subprocess.run(
+                    [sys.executable, "-m", "pip", "install", pkg],
+                    cwd=ROOT,
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=120,
+                )
+                if r.returncode == 0:
+                    st.success(f"Installed {pkg}. Re-check deps by re-opening this section.")
+                else:
+                    st.code(r.stderr or r.stdout or "pip failed")
+            finally:
+                _set_busy(False)
+            st.rerun()
+    _ollama_missing = any(not ok and pip_cmd is None for _, ok, pip_cmd in _adv_deps)
+    if _ollama_missing:
+        st.caption("Ollama: install from https://ollama.ai and ensure the server is running.")
+    # Save advanced settings to config (Phase 14: include Ollama host/model)
+    if st.button("Save advanced settings", key="save_adv_settings", disabled=_is_busy()):
+        cfg = load_config()
+        cfg["advanced_features_enabled"] = st.session_state.get("adv_features_enabled", False)
+        cfg.setdefault("llm_ollama", {})
+        cfg["llm_ollama"]["host"] = (st.session_state.get("adv_ollama_host") or "http://127.0.0.1:11434").strip()
+        _sel = st.session_state.get("adv_ollama_model_sel", "llama2")
+        _model = (st.session_state.get("adv_ollama_model_custom") or "").strip() if _sel == "Other" else _sel
+        cfg["llm_ollama"]["model"] = _model or "llama2"
+        err = save_config(cfg)
+        if err:
+            st.sidebar.error(err)
+        else:
+            st.sidebar.success("Saved.")
+        st.rerun()
 
 # ----- Main: single page -----
 st.title("CIG-APP: Contextual Information Generator")
