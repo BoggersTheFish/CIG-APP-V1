@@ -62,6 +62,8 @@ While any long operation is running, the app:
 - Disables all other action buttons (prevents accidental double-runs).
 - Shows progress bars and status messages for the running job.
 
+**New UI controls:** Feature status (sidebar) with one-click installs; theme toggle (light/dark); human-in-loop pause in Autonomous; optional embeddings (sentence-transformers) and vector search (sqlite-vss); backup/restore before autonomous; export preview and GraphML; PDF ingest (PyPDF2). See Step 6 and Optional Tools for toggles.
+
 ---
 
 ### 2.2 Step 1 – Setup

@@ -111,6 +111,10 @@ python benchmark.py
 
 (Rust extension must be built.)
 
+## Improvements
+
+Added license (MIT), sidebar Feature status and one-click installs, export previews and downloads, curiosity bias and LLM reflection for autonomous mode, dashboard (activation overview), scaling notes in UI, theme toggle, human-in-loop pause, embeddings (optional), vector search (optional), PDF ingestion, GraphML export, undo/backup.
+
 ## License
 
-See repository.#
+This project is licensed under the MIT License — see [LICENSE](LICENSE). Copyright (c) 2026 BoggersTheFish.

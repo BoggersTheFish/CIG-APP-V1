@@ -2,6 +2,12 @@
 
 Optional Streamlit UI and Autonomous Exploration (online search) are documented in **PLAN.md** addendum (Steps 43–58).
 
+## Sharding notes
+
+- **Label-based sharding**: Partition nodes by label prefix (e.g. first two characters) into separate SQLite files; route queries by seed label to the correct shard.
+- **Coordinator**: A lightweight process can own the shard index and assign seeds to worker processes that each open one or more shard DBs.
+- **Cross-shard queries**: For hypotheses spanning shards, either run TS on the primary shard only or implement a merge phase (e.g. aggregate top activations from each shard).
+
 ## Short-term (single machine, low-RAM)
 
 - **Batch sync**: `to_rust_graph(batch_size=5000)` already uses LIMIT/OFFSET for nodes and edges to avoid loading the full graph at once.
