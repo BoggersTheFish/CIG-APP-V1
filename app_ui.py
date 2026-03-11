@@ -248,6 +248,23 @@ step = st.sidebar.radio(
 )
 st.sidebar.caption("Run from project root: `python -m streamlit run app_ui.py`")
 
+# ----- Sidebar: theme toggle (persist in session) -----
+if "theme" not in st.session_state:
+    st.session_state.theme = "light"
+theme = st.sidebar.selectbox(
+    "UI Theme",
+    ["light", "dark"],
+    index=0 if st.session_state.get("theme") == "light" else 1,
+    key="sidebar_theme",
+)
+st.session_state.theme = theme
+_bg = "white" if theme == "light" else "#0e1117"
+_fg = "black" if theme == "light" else "white"
+st.markdown(
+    f'<style>section[data-testid="stSidebar"] {{ background-color: {_bg}; color: {_fg}; }} .stApp {{ background-color: {_bg}; color: {_fg}; }}</style>',
+    unsafe_allow_html=True,
+)
+
 # ----- Sidebar: optional dependency status & one-click install (Steps 43-44) -----
 _config_sidebar = load_config()
 _optional_deps = _check_optional_deps(_config_sidebar)
