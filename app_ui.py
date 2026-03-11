@@ -1147,7 +1147,11 @@ elif step == "5. Autonomous Exploration":
     seeds_5 = [seed_auto.strip()] + (adv_5.get("multi_seed") or [])
     reflection_5 = int(adv_5.get("reflection_cycles") or 0)
     use_online_val = use_online_5 and (online_ok or not run_local_only_5)
-    max_requests_5 = (config.get("online") or {}).get("max_requests_per_run", 30)
+    _max_req_default = int((config.get("online") or {}).get("max_requests_per_run", 30))
+    if "autonomous_max_requests" not in st.session_state:
+        st.session_state.autonomous_max_requests = _max_req_default
+    max_requests_5 = st.slider("Max Search Requests per Run", 5, 50, value=st.session_state.autonomous_max_requests, key="autonomous_max_requests", help="Cap on HTTP search requests per autonomous run.")
+    st.session_state.autonomous_max_requests = max_requests_5
     timeout_5 = (config.get("online") or {}).get("timeout_seconds", 10)
 
     # Human-in-loop: run one cycle at a time and wait for Continue
@@ -1259,10 +1263,11 @@ elif step == "5. Autonomous Exploration":
                     try:
                         from goat_ts_cig.autonomous_explore import run_autonomous_explore
                         online_override = use_online_val
+                        config_for_run = {**config, "online": {**(config.get("online") or {}), "max_requests_per_run": max_requests_5}}
                         result = run_autonomous_explore(
                             seed_auto,
                             config_path=CONFIG_PATH,
-                            config=config,
+                            config=config_for_run,
                             max_cycles=max_cycles,
                             max_queries_per_cycle=max_q,
                             online_override=online_override,
