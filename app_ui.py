@@ -1154,12 +1154,12 @@ elif step == "5. Autonomous Exploration":
     st.session_state.autonomous_max_requests = max_requests_5
     timeout_5 = (config.get("online") or {}).get("timeout_seconds", 10)
     if "rate_limit_enabled" not in st.session_state:
-        st.session_state.rate_limit_enabled = False
+        st.session_state.rate_limit_enabled = True
     rate_limit_enabled = st.toggle("Enable Rate Limiting", value=st.session_state.rate_limit_enabled, key="rate_limit_enabled", help="Pause between each web search to avoid abuse.")
     st.session_state.rate_limit_enabled = rate_limit_enabled
     if "cooldown_sec" not in st.session_state:
         st.session_state.cooldown_sec = 2
-    cooldown_sec = st.number_input("Cooldown seconds between searches", 0, 30, value=st.session_state.cooldown_sec, key="cooldown_sec", help="Seconds to wait after each search when rate limiting is enabled.")
+    cooldown_sec = st.number_input("Seconds Cooldown Between Searches", 0, 30, value=st.session_state.cooldown_sec, key="cooldown_sec", help="Seconds to wait after each search when rate limiting is enabled.")
     st.session_state.cooldown_sec = cooldown_sec
     cooldown_seconds_5 = int(cooldown_sec) if rate_limit_enabled else 0
 
