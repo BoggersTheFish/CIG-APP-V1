@@ -322,6 +322,96 @@ with st.sidebar.expander("6. Advanced Features", expanded=False):
     _ollama_missing = any(not ok and pip_cmd is None for _, ok, pip_cmd in _adv_deps)
     if _ollama_missing:
         st.caption("Ollama: install from https://ollama.ai and ensure the server is running.")
+    # ----- Phase 15-16: Graph visualization and exports (Steps 68-74) -----
+    st.markdown("---")
+    st.caption("Graph visualization")
+    _last_seed = (st.session_state.get("last_run_result") or {}).get("seed", "")
+    _viz_seed = st.text_input("Seed label for graph", value=_last_seed or "artificial intelligence", key="adv_viz_seed")
+    _gv_ok = next((ok for n, ok, _ in _adv_deps if "Graphviz" in n and "Python" in n), False)
+    _mpl_ok = next((ok for n, ok, _ in _adv_deps if n == "Matplotlib"), False)
+    _viz_engine = "graphviz" if _gv_ok else ("matplotlib" if _mpl_ok else None)
+    if _viz_engine and st.button("Visualize Graph", key="adv_viz_btn", disabled=_is_busy()):
+        _set_busy(True)
+        try:
+            from goat_ts_cig.knowledge_graph import KnowledgeGraph
+            from goat_ts_cig.graph_viz import export_subgraph_png
+            _db = (_config_for_adv.get("graph") or {}).get("path", "data/knowledge_graph.db")
+            if not _db or _db == ":memory:":
+                st.warning("Graph path is in-memory or missing. Run a pipeline first with a file DB.")
+            else:
+                _kg = KnowledgeGraph(os.path.join(ROOT, _db) if not os.path.isabs(_db) else _db)
+                _node = _kg.get_node_by_label(_viz_seed.strip()) if _viz_seed.strip() else None
+                if not _node:
+                    st.warning(f"Seed label '{_viz_seed}' not found in graph.")
+                else:
+                    _out = os.path.join(ROOT, "data", "exports", "subgraph.png")
+                    os.makedirs(os.path.dirname(_out), exist_ok=True)
+                    export_subgraph_png(_kg, _node["id"], _out, depth=2, engine=_viz_engine)
+                    st.session_state["adv_viz_graph_path"] = _out
+                _kg.close()
+        except Exception as e:
+            st.error(str(e))
+        finally:
+            _set_busy(False)
+        st.rerun()
+    if not _viz_engine:
+        st.caption("Install Graphviz or Matplotlib to visualize.")
+    _viz_path = st.session_state.get("adv_viz_graph_path")
+    if _viz_path and os.path.isfile(_viz_path):
+        st.image(_viz_path, caption="Graph (subgraph)", use_container_width=True)
+        with open(_viz_path, "rb") as _f:
+            st.download_button("Download graph PNG", data=_f.read(), file_name="subgraph.png", mime="image/png", key="adv_dl_png")
+    st.caption("Export data")
+    _export_dir = (_config_for_adv.get("export") or {}).get("default_dir", "data/exports")
+    _export_dir_resolved = os.path.join(ROOT, _export_dir) if not os.path.isabs(_export_dir) else _export_dir
+    if st.button("Export CSV", key="adv_export_csv_btn", disabled=_is_busy()):
+        _set_busy(True)
+        try:
+            from goat_ts_cig.knowledge_graph import KnowledgeGraph
+            from goat_ts_cig.export_utils import export_graph_csv
+            _db = (_config_for_adv.get("graph") or {}).get("path", "data/knowledge_graph.db")
+            if not _db or _db == ":memory:":
+                st.warning("Graph path is in-memory or missing.")
+            else:
+                _kg = KnowledgeGraph(os.path.join(ROOT, _db) if not os.path.isabs(_db) else _db)
+                _paths = export_graph_csv(_kg, _export_dir_resolved)
+                _kg.close()
+                st.session_state["adv_export_csv_paths"] = _paths
+        except Exception as e:
+            st.error(str(e))
+        finally:
+            _set_busy(False)
+        st.rerun()
+    _csv_paths = st.session_state.get("adv_export_csv_paths", [])
+    if _csv_paths:
+        for _p in _csv_paths:
+            if os.path.isfile(_p):
+                with open(_p, "r", encoding="utf-8") as _f:
+                    st.download_button(f"Download {os.path.basename(_p)}", data=_f.read(), file_name=os.path.basename(_p), mime="text/csv", key=f"adv_dl_csv_{os.path.basename(_p)}")
+    if st.button("Export GraphML", key="adv_export_graphml_btn", disabled=_is_busy()):
+        _set_busy(True)
+        try:
+            from goat_ts_cig.knowledge_graph import KnowledgeGraph
+            from goat_ts_cig.export_utils import to_graphml
+            _db = (_config_for_adv.get("graph") or {}).get("path", "data/knowledge_graph.db")
+            if not _db or _db == ":memory:":
+                st.warning("Graph path is in-memory or missing.")
+            else:
+                _kg = KnowledgeGraph(os.path.join(ROOT, _db) if not os.path.isabs(_db) else _db)
+                _gml_path = os.path.join(_export_dir_resolved, "graph.graphml")
+                os.makedirs(_export_dir_resolved, exist_ok=True)
+                to_graphml(_kg, _gml_path)
+                _kg.close()
+                st.session_state["adv_export_graphml_path"] = _gml_path
+        except Exception as e:
+            st.error(str(e))
+        finally:
+            _set_busy(False)
+        st.rerun()
+    _gml_path = st.session_state.get("adv_export_graphml_path")
+    if _gml_path and os.path.isfile(_gml_path):
+        with open(_gml_path, "r", encoding="utf-8") as _f:
+            st.download_button("Download GraphML", data=_f.read(), file_name="graph.graphml", mime="application/xml", key="adv_dl_graphml")
     # Save advanced settings to config (Phase 14: include Ollama host/model)
     if st.button("Save advanced settings", key="save_adv_settings", disabled=_is_busy()):
         cfg = load_config()

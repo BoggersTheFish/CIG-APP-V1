@@ -1,4 +1,4 @@
-"""Export subgraph as PNG (graphviz or matplotlib)."""
+"""Export subgraph as PNG (graphviz or matplotlib). Phases 15-16, Steps 68-74."""
 from __future__ import annotations
 
 import os

@@ -1,4 +1,4 @@
-"""Export graph to CSV, GraphML, and CIG result to JSON."""
+"""Export graph to CSV, GraphML, and CIG result to JSON. Phases 15-16, Steps 68-74."""
 from __future__ import annotations
 
 import csv
