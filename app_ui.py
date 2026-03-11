@@ -1,11 +1,11 @@
 """
-CIG-APP UI: single-page Dry Run (basic) or Full Run (all features).
+CIG-APP UI: Wizard-focused setup, clean tabs, modern layout.
 Run from project root: streamlit run app_ui.py
+Rebuild: Setup Wizard (first-run), Main Controls, Advanced Settings, Run & Results.
 """
 from __future__ import annotations
 
 import copy
-import io
 import json
 import os
 import queue
@@ -22,20 +22,25 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.join(ROOT, "python"))
 
+CONFIG_PATH = os.path.join(ROOT, "config.yaml")
+SETUP_FLAG_PATH = os.path.join(ROOT, "setup_complete.txt")
+ENV_PATH = os.path.join(ROOT, ".env")
+
 st.set_page_config(
     page_title="CIG-APP",
     page_icon="🧠",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="collapsed",
 )
 
-CONFIG_PATH = os.path.join(ROOT, "config.yaml")
-
-# Phase 18: Progress holder for pipeline callback (thread writes, main reads)
-_progress_holder = [0, 1, ""]
-
+# ----- Session state -----
 if "cig_operation_in_progress" not in st.session_state:
     st.session_state.cig_operation_in_progress = False
+if "last_run_result" not in st.session_state:
+    st.session_state.last_run_result = None
+if "dark_mode" not in st.session_state:
+    st.session_state.dark_mode = True
+_progress_holder = [0, 1, ""]
 
 
 def _set_busy(busy: bool) -> None:
@@ -47,11 +52,10 @@ def _is_busy() -> bool:
 
 
 def _load_env_overrides() -> None:
-    env_path = os.path.join(ROOT, ".env")
-    if not os.path.isfile(env_path):
+    if not os.path.isfile(ENV_PATH):
         return
     try:
-        for line in open(env_path, encoding="utf-8", errors="replace"):
+        for line in open(ENV_PATH, encoding="utf-8", errors="replace"):
             line = line.strip()
             if not line or line.startswith("#"):
                 continue
@@ -74,17 +78,8 @@ def load_config() -> dict:
             config = yaml.safe_load(f) or {}
     except Exception:
         config = {}
-    # Phase 14: Env overrides for Ollama (OLLAMA_HOST/MODEL or CIG_OLLAMA_*)
-    default_host = "http://127.0.0.1:11434"
-    default_model = "llama2"
-    if os.environ.get("OLLAMA_HOST", "").strip():
-        default_host = os.environ.get("OLLAMA_HOST", default_host).strip()
-    elif os.environ.get("CIG_OLLAMA_HOST", "").strip():
-        default_host = os.environ.get("CIG_OLLAMA_HOST", default_host).strip()
-    if os.environ.get("OLLAMA_MODEL", "").strip():
-        default_model = os.environ.get("OLLAMA_MODEL", default_model).strip()
-    elif os.environ.get("CIG_OLLAMA_MODEL", "").strip():
-        default_model = os.environ.get("CIG_OLLAMA_MODEL", default_model).strip()
+    default_host = os.environ.get("OLLAMA_HOST") or os.environ.get("CIG_OLLAMA_HOST") or "http://127.0.0.1:11434"
+    default_model = os.environ.get("OLLAMA_MODEL") or os.environ.get("CIG_OLLAMA_MODEL") or "llama2"
     config.setdefault("llm_ollama", {}).update({
         "enabled": config.get("llm_ollama", {}).get("enabled", False),
         "host": config.get("llm_ollama", {}).get("host", default_host),
@@ -103,590 +98,476 @@ def save_config(config: dict) -> str | None:
         return str(e)
 
 
-def check_full_deps(config: dict) -> list[tuple[str, bool, str]]:
-    """Return list of (display_name, ok, install_hint). All must be ok for Full Run."""
-    result: list[tuple[str, bool, str]] = []
+def check_all_deps(config: dict) -> list[tuple[str, bool, str | None, str]]:
+    """Return (name, ok, pip_pkg_or_none, description) for each dependency."""
+    deps: list[tuple[str, bool, str | None, str]] = []
 
-    # Ollama (local LLM)
-    ollama_ok = False
+    # Ollama
+    ok = False
     try:
-        import requests as _req
+        import requests as _r
         host = (config.get("llm_ollama") or {}).get("host", "http://127.0.0.1:11434")
-        r = _req.get(host.rstrip("/") + "/api/tags", timeout=2)
-        ollama_ok = r.status_code == 200
+        ok = _r.get(host.rstrip("/") + "/api/tags", timeout=2).status_code == 200
     except Exception:
         pass
-    result.append((
-        "Ollama (local LLM)",
-        ollama_ok,
-        "Install from https://ollama.ai — then run e.g. ollama pull llama2 and ensure Ollama is running.",
-    ))
+    deps.append(("Ollama (Local LLM)", ok, None, "For hypothesis phrasing and autonomous query expansion. Runs locally."))
 
-    # Graphviz binary (dot)
-    dot_ok = False
+    # Graphviz binary
+    ok = False
     try:
-        r = subprocess.run(
-            ["dot", "-V"],
-            capture_output=True,
-            timeout=2,
-        )
-        dot_ok = r.returncode == 0
+        ok = subprocess.run(["dot", "-V"], capture_output=True, timeout=2).returncode == 0
     except Exception:
         pass
-    result.append((
-        "Graphviz (binary)",
-        dot_ok,
-        "Download Graphviz from https://graphviz.org and add to PATH.",
-    ))
+    deps.append(("Graphviz (binary)", ok, None, "Required for graph PNG export. Download from https://graphviz.org and add to PATH."))
 
     # Graphviz Python
-    gv_ok = False
     try:
         import graphviz  # noqa: F401
-        gv_ok = True
+        ok = True
     except Exception:
-        pass
-    result.append((
-        "Graphviz (Python)",
-        gv_ok,
-        "pip install graphviz",
-    ))
+        ok = False
+    deps.append(("Graphviz (Python)", ok, "graphviz", "Python wrapper for Graphviz rendering."))
 
-    # sentence-transformers
-    st_ok = False
-    try:
-        import sentence_transformers  # noqa: F401
-        st_ok = True
-    except Exception:
-        pass
-    result.append((
-        "sentence-transformers",
-        st_ok,
-        "pip install sentence-transformers",
-    ))
-
-    # sqlite-vss (vector search)
-    vss_ok = False
-    try:
-        import sqlite_vss  # noqa: F401
-        vss_ok = True
-    except Exception:
-        pass
-    result.append((
-        "sqlite-vss",
-        vss_ok,
-        "pip install sqlite-vss",
-    ))
-
-    # PyPDF2
-    pdf_ok = False
-    try:
-        import PyPDF2  # noqa: F401
-        pdf_ok = True
-    except Exception:
-        pass
-    result.append((
-        "PyPDF2",
-        pdf_ok,
-        "pip install PyPDF2",
-    ))
-
-    # beautifulsoup4
-    bs4_ok = False
-    try:
-        import bs4  # noqa: F401
-        bs4_ok = True
-    except Exception:
-        pass
-    result.append((
-        "beautifulsoup4",
-        bs4_ok,
-        "pip install beautifulsoup4",
-    ))
-
-    return result
-
-
-def check_advanced_deps(config: dict) -> list[tuple[str, bool, str | None]]:
-    """Phase 13: Dependency checks for Advanced Features (Ollama, Graphviz, Matplotlib).
-    Returns list of (display_name, ok, pip_cmd_or_none). None = no pip (e.g. Ollama = external).
-    """
-    result: list[tuple[str, bool, str | None]] = []
-
-    # Ollama (local LLM) — detected via API, no pip
-    ollama_ok = False
-    try:
-        import requests as _req
-        host = (config.get("llm_ollama") or {}).get("host", "http://127.0.0.1:11434")
-        r = _req.get(host.rstrip("/") + "/api/tags", timeout=2)
-        ollama_ok = r.status_code == 200
-    except Exception:
-        pass
-    result.append(("Ollama (local LLM)", ollama_ok, None))
-
-    # Graphviz (Python) — pip install graphviz
-    gv_ok = False
-    try:
-        import graphviz  # noqa: F401
-        gv_ok = True
-    except Exception:
-        pass
-    result.append(("Graphviz (Python)", gv_ok, "pip install graphviz"))
-
-    # Matplotlib — pip install matplotlib
-    mpl_ok = False
+    # Matplotlib
     try:
         import matplotlib  # noqa: F401
-        mpl_ok = True
+        ok = True
     except Exception:
-        pass
-    result.append(("Matplotlib", mpl_ok, "pip install matplotlib"))
+        ok = False
+    deps.append(("Matplotlib", ok, "matplotlib", "Alternative engine for graph visualization."))
 
-    return result
+    # sentence-transformers
+    try:
+        import sentence_transformers  # noqa: F401
+        ok = True
+    except Exception:
+        ok = False
+    deps.append(("sentence-transformers", ok, "sentence-transformers", "Optional embeddings for similarity."))
+
+    # sqlite-vss
+    try:
+        import sqlite_vss  # noqa: F401
+        ok = True
+    except Exception:
+        ok = False
+    deps.append(("sqlite-vss", ok, "sqlite-vss", "Optional vector search."))
+
+    # PyPDF2
+    try:
+        import PyPDF2  # noqa: F401
+        ok = True
+    except Exception:
+        ok = False
+    deps.append(("PyPDF2", ok, "PyPDF2", "PDF text ingestion."))
+
+    # BeautifulSoup4
+    try:
+        import bs4  # noqa: F401
+        ok = True
+    except Exception:
+        ok = False
+    deps.append(("BeautifulSoup4", ok, "beautifulsoup4", "For web search result parsing."))
+
+    return deps
 
 
-# ----- Sidebar: theme only -----
-if "theme" not in st.session_state:
-    st.session_state.theme = "light"
-theme = st.sidebar.selectbox(
-    "UI Theme",
-    ["light", "dark"],
-    index=0 if st.session_state.get("theme") == "light" else 1,
-    key="sidebar_theme",
-)
-st.session_state.theme = theme
-_bg = "white" if theme == "light" else "#0e1117"
-_fg = "black" if theme == "light" else "white"
-st.markdown(
-    f'<style>section[data-testid="stSidebar"] {{ background-color: {_bg}; color: {_fg}; }} .stApp {{ background-color: {_bg}; color: {_fg}; }}</style>',
-    unsafe_allow_html=True,
-)
+def run_validate_config() -> tuple[bool, str]:
+    """Run validate_config.py; return (success, message)."""
+    try:
+        r = subprocess.run(
+            [sys.executable, os.path.join(ROOT, "validate_config.py")],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if r.returncode == 0:
+            return True, r.stdout or "Config valid."
+        return False, r.stderr or r.stdout or "Validation failed."
+    except Exception as e:
+        return False, str(e)
 
-# ----- Sidebar: 6. Advanced Features (Phase 13, Steps 59-62) -----
-_config_for_adv = load_config()
-_adv_deps = check_advanced_deps(_config_for_adv)
-with st.sidebar.expander("6. Advanced Features", expanded=False):
-    st.caption("Optional deps for LLM, graph viz, and exports.")
-    for name, ok, pip_cmd in _adv_deps:
-        st.write(f"{'✅' if ok else '❌'} {name}")
-    # Phase 14: Ollama not detected warning
-    _ollama_ok = next((ok for n, ok, _ in _adv_deps if "Ollama" in n), False)
-    if not _ollama_ok:
-        st.warning("Ollama not detected. Install from https://ollama.ai and start the server for LLM features.")
-    # Ollama host and model (Phase 14, Steps 63-67)
-    _ollama_cfg = _config_for_adv.get("llm_ollama") or {}
-    st.text_input(
-        "Ollama host",
-        value=_ollama_cfg.get("host", "http://127.0.0.1:11434"),
-        key="adv_ollama_host",
-        help="e.g. http://127.0.0.1:11434",
+
+# ----- Custom CSS -----
+def _inject_css(dark: bool) -> None:
+    bg = "#0e1117" if dark else "#ffffff"
+    fg = "#fafafa" if dark else "#262730"
+    card_bg = "#1e2127" if dark else "#f0f2f6"
+    st.markdown(
+        f"""
+        <style>
+        .stApp {{ background-color: {bg}; color: {fg}; }}
+        .stButton > button {{ border-radius: 6px; font-weight: 500; }}
+        .stButton > button:first-child {{ background-color: #4CAF50; color: white; }}
+        div[data-testid="stExpander"] {{ background-color: {card_bg}; border-radius: 8px; margin: 0.5rem 0; }}
+        .block-container {{ padding-top: 1.5rem; max-width: 1100px; }}
+        h1 {{ font-family: Arial, sans-serif; margin-bottom: 0.5rem; }}
+        </style>
+        """,
+        unsafe_allow_html=True,
     )
-    _model_opts = ["llama2", "llama3.2", "mistral", "phi3", "Other"]
-    _cur_model = _ollama_cfg.get("model", "llama2")
-    _model_idx = _model_opts.index(_cur_model) if _cur_model in _model_opts else _model_opts.index("Other")
-    st.selectbox(
-        "Ollama model",
-        _model_opts,
-        index=_model_idx,
-        key="adv_ollama_model_sel",
-    )
-    if st.session_state.get("adv_ollama_model_sel") == "Other":
-        st.text_input("Custom model name", value=_cur_model if _cur_model not in _model_opts else "", key="adv_ollama_model_custom")
-    # Master toggle (persisted in config)
-    adv_enabled = st.checkbox(
-        "Enable advanced features",
-        value=_config_for_adv.get("advanced_features_enabled", False),
-        key="adv_features_enabled",
-        help="Use Ollama, Graphviz, Matplotlib when available.",
-    )
-    # Install buttons for pip-installable deps
-    for name, ok, pip_cmd in _adv_deps:
-        if ok or not pip_cmd:
-            continue
-        # pip_cmd is e.g. "pip install graphviz"
-        pkg = pip_cmd.replace("pip install", "").strip() if pip_cmd else None
-        if pkg and st.button(f"Install {name}", key=f"adv_install_{name.replace(' ', '_')}", disabled=_is_busy()):
-            _set_busy(True)
-            try:
-                r = subprocess.run(
-                    [sys.executable, "-m", "pip", "install", pkg],
-                    cwd=ROOT,
-                    capture_output=True,
-                    text=True,
-                    encoding="utf-8",
-                    errors="replace",
-                    timeout=120,
-                )
-                if r.returncode == 0:
-                    st.success(f"Installed {pkg}. Re-check deps by re-opening this section.")
-                else:
-                    st.code(r.stderr or r.stdout or "pip failed")
-            finally:
-                _set_busy(False)
-            st.rerun()
-    _ollama_missing = any(not ok and pip_cmd is None for _, ok, pip_cmd in _adv_deps)
-    if _ollama_missing:
-        st.caption("Ollama: install from https://ollama.ai and ensure the server is running.")
-    # ----- Phase 15-16: Graph visualization and exports (Steps 68-74) -----
-    st.markdown("---")
-    st.caption("Graph visualization")
-    _last_seed = (st.session_state.get("last_run_result") or {}).get("seed", "")
-    _viz_seed = st.text_input("Seed label for graph", value=_last_seed or "artificial intelligence", key="adv_viz_seed")
-    _gv_ok = next((ok for n, ok, _ in _adv_deps if "Graphviz" in n and "Python" in n), False)
-    _mpl_ok = next((ok for n, ok, _ in _adv_deps if n == "Matplotlib"), False)
-    _viz_engine = "graphviz" if _gv_ok else ("matplotlib" if _mpl_ok else None)
-    if _viz_engine and st.button("Visualize Graph", key="adv_viz_btn", disabled=_is_busy()):
-        _set_busy(True)
-        try:
-            from goat_ts_cig.knowledge_graph import KnowledgeGraph
-            from goat_ts_cig.graph_viz import export_subgraph_png
-            _db = (_config_for_adv.get("graph") or {}).get("path", "data/knowledge_graph.db")
-            if not _db or _db == ":memory:":
-                st.warning("Graph path is in-memory or missing. Run a pipeline first with a file DB.")
-            else:
-                _kg = KnowledgeGraph(os.path.join(ROOT, _db) if not os.path.isabs(_db) else _db)
-                _node = _kg.get_node_by_label(_viz_seed.strip()) if _viz_seed.strip() else None
-                if not _node:
-                    st.warning(f"Seed label '{_viz_seed}' not found in graph.")
-                else:
-                    _out = os.path.join(ROOT, "data", "exports", "subgraph.png")
-                    os.makedirs(os.path.dirname(_out), exist_ok=True)
-                    export_subgraph_png(_kg, _node["id"], _out, depth=2, engine=_viz_engine)
-                    st.session_state["adv_viz_graph_path"] = _out
-                _kg.close()
-        except Exception as e:
-            st.error(str(e))
-        finally:
-            _set_busy(False)
-        st.rerun()
-    if not _viz_engine:
-        st.caption("Install Graphviz or Matplotlib to visualize.")
-    _viz_path = st.session_state.get("adv_viz_graph_path")
-    if _viz_path and os.path.isfile(_viz_path):
-        st.image(_viz_path, caption="Graph (subgraph)", use_container_width=True)
-        with open(_viz_path, "rb") as _f:
-            st.download_button("Download graph PNG", data=_f.read(), file_name="subgraph.png", mime="image/png", key="adv_dl_png")
-    st.caption("Export data")
-    _export_dir = (_config_for_adv.get("export") or {}).get("default_dir", "data/exports")
-    _export_dir_resolved = os.path.join(ROOT, _export_dir) if not os.path.isabs(_export_dir) else _export_dir
-    if st.button("Export CSV", key="adv_export_csv_btn", disabled=_is_busy()):
-        _set_busy(True)
-        try:
-            from goat_ts_cig.knowledge_graph import KnowledgeGraph
-            from goat_ts_cig.export_utils import export_graph_csv
-            _db = (_config_for_adv.get("graph") or {}).get("path", "data/knowledge_graph.db")
-            if not _db or _db == ":memory:":
-                st.warning("Graph path is in-memory or missing.")
-            else:
-                _kg = KnowledgeGraph(os.path.join(ROOT, _db) if not os.path.isabs(_db) else _db)
-                _paths = export_graph_csv(_kg, _export_dir_resolved)
-                _kg.close()
-                st.session_state["adv_export_csv_paths"] = _paths
-        except Exception as e:
-            st.error(str(e))
-        finally:
-            _set_busy(False)
-        st.rerun()
-    _csv_paths = st.session_state.get("adv_export_csv_paths", [])
-    if _csv_paths:
-        for _p in _csv_paths:
-            if os.path.isfile(_p):
-                with open(_p, "r", encoding="utf-8") as _f:
-                    st.download_button(f"Download {os.path.basename(_p)}", data=_f.read(), file_name=os.path.basename(_p), mime="text/csv", key=f"adv_dl_csv_{os.path.basename(_p)}")
-    if st.button("Export GraphML", key="adv_export_graphml_btn", disabled=_is_busy()):
-        _set_busy(True)
-        try:
-            from goat_ts_cig.knowledge_graph import KnowledgeGraph
-            from goat_ts_cig.export_utils import to_graphml
-            _db = (_config_for_adv.get("graph") or {}).get("path", "data/knowledge_graph.db")
-            if not _db or _db == ":memory:":
-                st.warning("Graph path is in-memory or missing.")
-            else:
-                _kg = KnowledgeGraph(os.path.join(ROOT, _db) if not os.path.isabs(_db) else _db)
-                _gml_path = os.path.join(_export_dir_resolved, "graph.graphml")
-                os.makedirs(_export_dir_resolved, exist_ok=True)
-                to_graphml(_kg, _gml_path)
-                _kg.close()
-                st.session_state["adv_export_graphml_path"] = _gml_path
-        except Exception as e:
-            st.error(str(e))
-        finally:
-            _set_busy(False)
-        st.rerun()
-    _gml_path = st.session_state.get("adv_export_graphml_path")
-    if _gml_path and os.path.isfile(_gml_path):
-        with open(_gml_path, "r", encoding="utf-8") as _f:
-            st.download_button("Download GraphML", data=_f.read(), file_name="graph.graphml", mime="application/xml", key="adv_dl_graphml")
-    # ----- Phase 17: Autonomous settings (Steps 75-78) -----
-    st.markdown("---")
-    st.caption("Autonomous exploration")
-    _adv_auto = _config_for_adv.get("advanced_autonomous") or {}
-    st.number_input(
-        "Reflection cycles (extra propagation runs per cycle)",
-        min_value=0,
-        max_value=10,
-        value=int(_adv_auto.get("reflection_cycles", 3)),
-        key="adv_reflection_cycles",
-    )
-    _multi_seed_str = "\n".join(_adv_auto.get("multi_seed") or [])
-    st.text_area(
-        "Multi-seed (one per line, used with main seed in Full autonomous)",
-        value=_multi_seed_str,
-        height=80,
-        key="adv_multi_seed",
-    )
-    st.slider(
-        "Curiosity bias (0 = high activation, 1 = novel/low-activation nodes)",
-        0.0,
-        1.0,
-        value=float(_adv_auto.get("curiosity_bias", 0.0)),
-        step=0.1,
-        key="adv_curiosity_bias",
-    )
-    st.checkbox(
-        "LLM reflection (Ollama summary after autonomous run)",
-        value=bool(_adv_auto.get("llm_reflection", False)),
-        key="adv_llm_reflection",
-    )
-    # Save advanced settings to config (Phase 14 + Phase 17)
-    if st.button("Save advanced settings", key="save_adv_settings", disabled=_is_busy()):
-        cfg = load_config()
-        cfg["advanced_features_enabled"] = st.session_state.get("adv_features_enabled", False)
-        cfg.setdefault("llm_ollama", {})
-        cfg["llm_ollama"]["host"] = (st.session_state.get("adv_ollama_host") or "http://127.0.0.1:11434").strip()
-        _sel = st.session_state.get("adv_ollama_model_sel", "llama2")
-        _model = (st.session_state.get("adv_ollama_model_custom") or "").strip() if _sel == "Other" else _sel
-        cfg["llm_ollama"]["model"] = _model or "llama2"
-        cfg.setdefault("advanced_autonomous", {})
-        cfg["advanced_autonomous"]["reflection_cycles"] = int(st.session_state.get("adv_reflection_cycles", 3))
-        _ms = (st.session_state.get("adv_multi_seed") or "").strip()
-        cfg["advanced_autonomous"]["multi_seed"] = [ln.strip() for ln in _ms.splitlines() if ln.strip()]
-        cfg["advanced_autonomous"]["curiosity_bias"] = float(st.session_state.get("adv_curiosity_bias", 0.0))
-        cfg["advanced_autonomous"]["llm_reflection"] = bool(st.session_state.get("adv_llm_reflection", False))
-        err = save_config(cfg)
-        if err:
-            st.sidebar.error(err)
-        else:
-            st.sidebar.success("Saved.")
-        st.rerun()
 
-# ----- Main: single page -----
-st.title("CIG-APP: Contextual Information Generator")
 
-config = load_config()
-# Phase 18: Verbose monitoring toggle (persist in session_state)
-verbose_monitoring = st.checkbox(
-    "Verbose monitoring (show progress and stats)",
-    value=st.session_state.get("verbose_monitoring", bool((config.get("monitoring") or {}).get("show_progress", False))),
-    key="verbose_monitoring",
-)
+# ----- Header -----
+_inject_css(st.session_state.dark_mode)
+c1, c2, c3 = st.columns([2, 1, 1])
+with c1:
+    st.title("CIG-APP: Contextual Information Generator")
+    st.caption("v1.0 — Local-first knowledge exploration with Thinking Wave propagation")
+with c3:
+    dark = st.checkbox("Dark mode", value=st.session_state.dark_mode, key="dark_mode_cb")
+    st.session_state.dark_mode = dark
 
-# Phase 18: Show "Running..." and progress when single-pipeline is in background thread
-if st.session_state.get("pipeline_running"):
-    _pipe_thread = st.session_state.get("_pipeline_thread")
-    _thread_done = _pipe_thread is None or not getattr(_pipe_thread, "is_alive", lambda: False)()
-    if _thread_done:
-        _set_busy(False)
-        st.session_state.pipeline_running = False
-        st.session_state["_pipeline_thread"] = None
-        _q = st.session_state.pop("_pipeline_queue", None)
-        if _q is not None:
-            try:
-                _res, _err = _q.get_nowait()
-                if _err is not None:
-                    st.session_state["last_run_result"] = {"error": str(_err)}
-                else:
-                    st.session_state["last_run_result"] = _res
-            except queue.Empty:
-                st.session_state["last_run_result"] = {"error": "Pipeline finished but no result on queue."}
-        st.rerun()
-    else:
-        _start = st.session_state.get("pipeline_start_time") or time.time()
-        _elapsed = int(time.time() - _start)
-        st.info(f"⏳ **Running pipeline...** ({_elapsed} s) — please wait.")
-        _cur, _tot, _msg = _progress_holder[0], _progress_holder[1], _progress_holder[2]
-        if _tot and _tot > 0:
-            st.progress(_cur / _tot, text=_msg or f"Step {_cur}/{_tot}")
-        if verbose_monitoring:
-            st.caption(f"Phase: {_msg} | Elapsed: {_elapsed} s")
-        time.sleep(1)
-        st.rerun()
+# ----- Tabs -----
+tab1, tab2, tab3, tab4 = st.tabs(["Setup Wizard", "Main Controls", "Advanced Settings", "Run & Results"])
 
-# Seed (persisted via key="seed_input")
-seed = st.text_input(
-    "Enter your seed concept (e.g., artificial intelligence)",
-    value="artificial intelligence",
-    key="seed_input",
-)
+# ========== Tab 1: Setup Wizard ==========
+with tab1:
+    st.header("Welcome to CIG-APP: Let's Get You Set Up!")
+    setup_done = os.path.isfile(SETUP_FLAG_PATH)
 
-# Mode (persisted via key="mode_radio")
-mode = st.radio(
-    "Mode",
-    ["Dry Run (Basic)", "Full Run (All Features)"],
-    key="mode_radio",
-)
+    st.subheader("Step 1: Check & Install Dependencies")
+    config = load_config()
+    deps = check_all_deps(config)
+    installed = sum(1 for (_, ok, _, _) in deps if ok)
+    st.progress(installed / len(deps) if deps else 1.0)
 
-full_deps = check_full_deps(config) if mode == "Full Run (All Features)" else []
-all_deps_ok = all(ok for _, ok, _ in full_deps) if full_deps else True
-
-if mode == "Full Run (All Features)":
-    st.subheader("Full Run dependencies")
-    for name, ok, _ in full_deps:
-        st.write(f"{'✅' if ok else '❌'} {name}")
-    if not all_deps_ok:
-        st.error("Missing dependencies — install them and click **Re-Check Deps** before running.")
-        with st.expander("Install steps"):
-            for name, ok, hint in full_deps:
+    # Grid of dep cards (3 columns)
+    cols = st.columns(3)
+    for i, (name, ok, pip_pkg, desc) in enumerate(deps):
+        with cols[i % 3]:
+            with st.container():
+                status = "✅" if ok else "❌"
+                st.markdown(f"**{status} {name}**")
+                st.caption(desc)
                 if not ok:
-                    st.markdown(f"**{name}**")
-                    st.code(hint, language="text")
-        if st.button("Re-Check Deps", key="recheck_deps"):
-            st.rerun()
-
-# Phase 17: Optional autonomous run (Full mode only)
-run_autonomous = False
-if mode == "Full Run (All Features)":
-    run_autonomous = st.checkbox("Run autonomous (5 cycles)", value=False, key="run_autonomous_cb")
-
-run_disabled = _is_busy() or (mode == "Full Run (All Features)" and not all_deps_ok)
-
-if st.button("Run", type="primary", disabled=run_disabled, key="btn_run"):
-    if not seed.strip():
-        st.error("Enter a seed concept.")
-    else:
-        seed_val = seed.strip()
-        if run_autonomous:
-            _set_busy(True)
-            with st.status("Running autonomous exploration...", expanded=True):
-                try:
-                    from goat_ts_cig.autonomous_explore import run_autonomous_explore
-                    adv = config.get("advanced_autonomous") or {}
-                    seeds_list = [seed_val] + [s for s in (adv.get("multi_seed") or []) if isinstance(s, str) and s.strip()]
-                    result = run_autonomous_explore(
-                        seed_val,
-                        config_path=CONFIG_PATH,
-                        config=config,
-                        max_cycles=5,
-                        max_queries_per_cycle=3,
-                        online_override=False if not all_deps_ok else None,
-                        seeds=seeds_list if len(seeds_list) > 1 else None,
-                    )
-                    st.session_state["last_run_result"] = result
-                except Exception as e:
-                    st.session_state["last_run_result"] = {"error": str(e)}
-                finally:
-                    _set_busy(False)
-            st.rerun()
-        else:
-            # Phase 18: Single pipeline in background thread so we can show progress
-            _progress_holder[0], _progress_holder[1], _progress_holder[2] = 0, 1, "starting"
-
-            def _progress_cb(c, t, m):
-                _progress_holder[0], _progress_holder[1], _progress_holder[2] = c, t, m
-
-            def _run_bg():
-                res, err = None, None
-                try:
-                    from goat_ts_cig.main import run_pipeline
-                    if mode == "Dry Run (Basic)":
-                        dry_config = copy.deepcopy(config)
-                        dry_config["llm"] = False
-                        dry_config.setdefault("llm_ollama", {})["enabled"] = False
-                        dry_config.setdefault("online", {})["enabled"] = False
-                        dry_config.setdefault("advanced", {})["embeddings"] = {"enabled": False}
-                        dry_config.setdefault("vector", {})["enabled"] = False
-                        dry_config.setdefault("ingestion", {})["pdf_enabled"] = False
-                        res = run_pipeline(
-                            seed=seed_val,
-                            config_path=CONFIG_PATH,
-                            config=dry_config,
-                            ticks_override=10,
-                            progress_callback=_progress_cb,
-                        )
+                    if pip_pkg:
+                        key = f"install_{name.replace(' ', '_')}"
+                        if st.button(f"Install {pip_pkg}", key=key, disabled=_is_busy()):
+                            _set_busy(True)
+                            with st.spinner(f"Installing {pip_pkg}..."):
+                                r = subprocess.run(
+                                    [sys.executable, "-m", "pip", "install", pip_pkg],
+                                    cwd=ROOT,
+                                    capture_output=True,
+                                    text=True,
+                                    timeout=120,
+                                )
+                                if r.returncode == 0:
+                                    st.success(f"Installed {pip_pkg}. Re-run to refresh.")
+                                else:
+                                    st.error((r.stderr or r.stdout or "Install failed")[:500])
+                            _set_busy(False)
+                            st.rerun()
                     else:
-                        res = run_pipeline(
-                            seed=seed_val,
+                        if "Ollama" in name:
+                            st.link_button("Download Ollama", "https://ollama.ai", key=f"ollama_link_{i}")
+                        elif "Graphviz" in name and "binary" in name:
+                            st.link_button("Download Graphviz", "https://graphviz.org/download/", key=f"gv_link_{i}")
+
+    st.subheader("Step 2: Configure Environment")
+    with st.expander("Edit .env (optional)"):
+        env_content = ""
+        if os.path.isfile(ENV_PATH):
+            try:
+                env_content = open(ENV_PATH, encoding="utf-8").read()
+            except Exception:
+                pass
+        env_edit = st.text_area(".env contents", value=env_content, height=120, key="env_editor")
+        if st.button("Save .env", key="save_env"):
+            try:
+                with open(ENV_PATH, "w", encoding="utf-8") as f:
+                    f.write(env_edit)
+                st.success("Saved.")
+            except Exception as e:
+                st.error(str(e))
+
+    with st.expander("Edit config.yaml"):
+        try:
+            with open(CONFIG_PATH, encoding="utf-8") as f:
+                yaml_content = f.read()
+        except Exception:
+            yaml_content = ""
+        yaml_edit = st.text_area("config.yaml", value=yaml_content, height=200, key="yaml_editor")
+        if st.button("Save config.yaml", key="save_yaml"):
+            try:
+                import yaml
+                yaml.safe_load(yaml_edit)
+                with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+                    f.write(yaml_edit)
+                st.success("Saved.")
+            except Exception as e:
+                st.error(f"Invalid YAML or write failed: {e}")
+
+    if st.button("Validate config", key="validate_cfg"):
+        ok, msg = run_validate_config()
+        if ok:
+            st.success("Config valid!")
+        else:
+            st.error(msg)
+
+    st.subheader("Step 3: Quick Test")
+    if st.button("Run sample test (Dry Run)", key="sample_test", disabled=_is_busy()):
+        _set_busy(True)
+        with st.spinner("Running sample pipeline..."):
+            try:
+                from goat_ts_cig.main import run_pipeline
+                cfg = load_config()
+                dry = copy.deepcopy(cfg)
+                dry["llm"] = False
+                dry.setdefault("llm_ollama", {})["enabled"] = False
+                dry.setdefault("online", {})["enabled"] = False
+                res = run_pipeline("test", config_path=CONFIG_PATH, config=dry, ticks_override=3)
+                if res.get("error"):
+                    st.error(res["error"])
+                else:
+                    st.success(f"Sample run OK. Seed={res.get('seed')}, node_id={res.get('node_id')}")
+            except Exception as e:
+                st.error(str(e))
+        _set_busy(False)
+
+    if st.button("Complete setup", key="complete_setup"):
+        try:
+            with open(SETUP_FLAG_PATH, "w") as f:
+                f.write("setup completed\n")
+            st.success("Setup complete! You can use Main Controls and other tabs.")
+            st.balloons()
+        except Exception as e:
+            st.error(str(e))
+
+    if not setup_done:
+        st.warning("Complete the steps above and click **Complete setup** to unlock the full flow. See README.md for help.")
+
+# ========== Tab 2: Main Controls ==========
+with tab2:
+    st.header("Main Controls")
+    config = load_config()
+    seed = st.text_input(
+        "Enter your seed concept (e.g., artificial intelligence)",
+        value="artificial intelligence",
+        key="seed_main",
+    )
+    mode = st.radio(
+        "Run mode",
+        ["Dry Run (Basic)", "Full Run (All Features)"],
+        key="mode_main",
+        help="Dry: TS propagation and CIG only. Full: includes LLM, embeddings, graph viz, etc.",
+    )
+    verbose = st.checkbox("Verbose monitoring (progress and stats)", value=True, key="verbose_main")
+    st.session_state.verbose_monitoring = verbose
+
+    full_deps = check_all_deps(config)
+    full_deps_ok = all(ok for _, ok, _, _ in full_deps)
+    run_autonomous = False
+    if mode == "Full Run (All Features)":
+        if not full_deps_ok:
+            st.warning("Some dependencies are missing. Install them in the Setup Wizard tab.")
+        run_autonomous = st.checkbox("Run autonomous (5 cycles)", value=False, key="run_auto_cb")
+
+    run_disabled = _is_busy() or (mode == "Full Run (All Features)" and not full_deps_ok)
+
+    if st.button("Run pipeline", type="primary", disabled=run_disabled, key="btn_run_main"):
+        if not seed.strip():
+            st.error("Enter a seed concept.")
+        else:
+            seed_val = seed.strip()
+            config = load_config()
+            if run_autonomous:
+                _set_busy(True)
+                with st.status("Running autonomous exploration...", expanded=True):
+                    try:
+                        from goat_ts_cig.autonomous_explore import run_autonomous_explore
+                        adv = config.get("advanced_autonomous") or {}
+                        seeds_list = [seed_val] + [s for s in (adv.get("multi_seed") or []) if isinstance(s, str) and s.strip()]
+                        result = run_autonomous_explore(
+                            seed_val,
                             config_path=CONFIG_PATH,
                             config=config,
-                            ticks_override=10,
-                            progress_callback=_progress_cb,
+                            max_cycles=5,
+                            max_queries_per_cycle=3,
+                            online_override=None,
+                            seeds=seeds_list if len(seeds_list) > 1 else None,
                         )
-                except Exception as e:
-                    err = e
-                try:
-                    _q.put((res, err))
-                except Exception:
-                    pass
+                        st.session_state.last_run_result = result
+                    except Exception as e:
+                        st.session_state.last_run_result = {"error": str(e)}
+                    finally:
+                        _set_busy(False)
+                st.rerun()
+            else:
+                _progress_holder[0], _progress_holder[1], _progress_holder[2] = 0, 1, "starting"
 
-            _q = queue.Queue()
-            st.session_state["_pipeline_queue"] = _q
-            _t = threading.Thread(target=_run_bg)
-            st.session_state["_pipeline_thread"] = _t
-            _t.start()
-            st.session_state.pipeline_running = True
-            st.session_state.pipeline_start_time = time.time()
+                def _progress_cb(c, t, m):
+                    _progress_holder[0], _progress_holder[1], _progress_holder[2] = c, t, m
+
+                def _run_bg():
+                    res, err = None, None
+                    try:
+                        from goat_ts_cig.main import run_pipeline
+                        if mode == "Dry Run (Basic)":
+                            dry = copy.deepcopy(config)
+                            dry["llm"] = False
+                            dry.setdefault("llm_ollama", {})["enabled"] = False
+                            dry.setdefault("online", {})["enabled"] = False
+                            dry.setdefault("advanced", {})["embeddings"] = {"enabled": False}
+                            dry.setdefault("vector", {})["enabled"] = False
+                            dry.setdefault("ingestion", {})["pdf_enabled"] = False
+                            res = run_pipeline(seed_val, config_path=CONFIG_PATH, config=dry, ticks_override=10, progress_callback=_progress_cb)
+                        else:
+                            res = run_pipeline(seed_val, config_path=CONFIG_PATH, config=config, ticks_override=10, progress_callback=_progress_cb)
+                    except Exception as e:
+                        err = e
+                    try:
+                        _q.put((res, err))
+                    except Exception:
+                        pass
+
+                _q = queue.Queue()
+                st.session_state["_pipeline_queue"] = _q
+                _t = threading.Thread(target=_run_bg)
+                _t.start()
+                st.session_state.pipeline_running = True
+                st.session_state.pipeline_start_time = time.time()
+                st.rerun()
+
+    # Pipeline running view (when single run in background)
+    if st.session_state.get("pipeline_running"):
+        _thread = st.session_state.get("_pipeline_thread")
+        if _thread is not None and not getattr(_thread, "is_alive", lambda: False)():
+            st.session_state.pipeline_running = False
+            st.session_state["_pipeline_thread"] = None
+            _q = st.session_state.pop("_pipeline_queue", None)
+            if _q:
+                try:
+                    res, err = _q.get_nowait()
+                    st.session_state.last_run_result = {"error": str(err)} if err else res
+                except queue.Empty:
+                    st.session_state.last_run_result = {"error": "No result from pipeline."}
+            st.rerun()
+        else:
+            elapsed = int(time.time() - st.session_state.get("pipeline_start_time", time.time()))
+            st.info(f"Running pipeline... ({elapsed} s)")
+            c, t, m = _progress_holder[0], _progress_holder[1], _progress_holder[2]
+            if t and t > 0:
+                st.progress(c / t, text=m)
+            time.sleep(1)
             st.rerun()
 
-# ----- Output area -----
-result = st.session_state.get("last_run_result")
-if result:
-    if result.get("error"):
-        st.error(result["error"])
+# ========== Tab 3: Advanced Settings ==========
+with tab3:
+    st.header("Advanced Settings")
+    config = load_config()
+    with st.expander("Autonomous exploration"):
+        adv = config.get("advanced_autonomous") or {}
+        ref = st.number_input("Reflection cycles (extra runs per cycle)", 0, 10, int(adv.get("reflection_cycles", 3)), key="adv_ref")
+        multi = st.text_area("Multi-seed (one per line)", value="\n".join(adv.get("multi_seed") or []), height=60, key="adv_multi")
+        curiosity = st.slider("Curiosity bias (0=high activation, 1=novel nodes)", 0.0, 1.0, float(adv.get("curiosity_bias", 0.0)), 0.1, key="adv_curiosity")
+        llm_ref = st.checkbox("LLM reflection (Ollama summary after autonomous)", value=bool(adv.get("llm_reflection", False)), key="adv_llm_ref")
+    with st.expander("LLM (Ollama)"):
+        o = config.get("llm_ollama") or {}
+        st.text_input("Ollama host", value=o.get("host", "http://127.0.0.1:11434"), key="adv_ollama_host")
+        st.text_input("Ollama model", value=o.get("model", "llama2"), key="adv_ollama_model")
+    with st.expander("Online & limits"):
+        on = config.get("online") or {}
+        st.checkbox("Online search enabled", value=on.get("enabled", False), key="adv_online")
+        st.number_input("Max requests per run", 10, 100, int(on.get("max_requests_per_run", 30)), key="adv_max_req")
+
+    if st.button("Save advanced settings", key="save_adv"):
+        cfg = load_config()
+        cfg.setdefault("advanced_autonomous", {})
+        cfg["advanced_autonomous"]["reflection_cycles"] = int(st.session_state.get("adv_ref", 3))
+        cfg["advanced_autonomous"]["multi_seed"] = [ln.strip() for ln in (st.session_state.get("adv_multi") or "").splitlines() if ln.strip()]
+        cfg["advanced_autonomous"]["curiosity_bias"] = float(st.session_state.get("adv_curiosity", 0.0))
+        cfg["advanced_autonomous"]["llm_reflection"] = bool(st.session_state.get("adv_llm_ref", False))
+        cfg.setdefault("llm_ollama", {})
+        cfg["llm_ollama"]["host"] = st.session_state.get("adv_ollama_host", "http://127.0.0.1:11434")
+        cfg["llm_ollama"]["model"] = st.session_state.get("adv_ollama_model", "llama2")
+        cfg.setdefault("online", {})
+        cfg["online"]["enabled"] = bool(st.session_state.get("adv_online", False))
+        cfg["online"]["max_requests_per_run"] = int(st.session_state.get("adv_max_req", 30))
+        err = save_config(cfg)
+        if err:
+            st.error(err)
+        else:
+            st.success("Saved.")
+
+# ========== Tab 4: Run & Results ==========
+with tab4:
+    st.header("Run & Results")
+    result = st.session_state.get("last_run_result")
+    if not result:
+        st.info("Run a pipeline from **Main Controls** to see results here.")
     else:
-        st.success(f"Done. Seed **{result.get('seed', '')}** (node_id={result.get('node_id', '')}).")
-        if st.session_state.get("verbose_monitoring", False):
-            g = result.get("graph") or {}
-            nodes = g.get("nodes") or []
-            edges = g.get("edges") or []
-            st.caption(f"**Stats:** {len(nodes)} nodes, {len(edges)} edges")
-        cig = result.get("cig") or {}
-        # Text: idea map, context expansion
-        if cig.get("idea_map"):
-            with st.expander("Idea map"):
-                st.json(cig["idea_map"])
-        if cig.get("context_expansion"):
-            with st.expander("Context expansion"):
-                st.write(cig["context_expansion"])
-        # Hypotheses
-        if cig.get("hypotheses"):
-            with st.expander("Hypotheses"):
-                for h in cig["hypotheses"]:
-                    st.write(f"**{h.get('from', '')}** → **{h.get('to', '')}**")
-                    if h.get("natural_language"):
-                        st.caption(h["natural_language"])
-        # Phase 17: Autonomous cycles summary and LLM reflection
-        if result.get("cycles"):
-            with st.expander("Cycles summary"):
-                for i, cy in enumerate(result["cycles"]):
-                    st.markdown(f"**Cycle {i+1}** (seed={cy.get('seed', '')}): queries = {cy.get('queries', [])}, ingested = {cy.get('ingested_count', 0)}")
-        if result.get("reflection_suggestion"):
-            with st.expander("LLM reflection"):
-                st.write(result["reflection_suggestion"])
-        # Graph image (Full only)
-        if mode == "Full Run (All Features)":
+        if result.get("error"):
+            st.error(result["error"])
+        else:
+            st.success(f"Seed **{result.get('seed', '')}** (node_id={result.get('node_id', '')})")
+            if st.session_state.get("verbose_monitoring"):
+                g = result.get("graph") or {}
+                st.caption(f"Stats: {len(g.get('nodes', []))} nodes, {len(g.get('edges', []))} edges")
+
+            cig = result.get("cig") or {}
+            if cig.get("idea_map"):
+                with st.expander("Idea map"):
+                    st.json(cig["idea_map"])
+            if cig.get("hypotheses"):
+                with st.expander("Hypotheses"):
+                    for h in cig["hypotheses"]:
+                        st.write(f"**{h.get('from')}** → **{h.get('to')}**")
+                        if h.get("natural_language"):
+                            st.caption(h["natural_language"])
+            if result.get("cycles"):
+                with st.expander("Cycles summary"):
+                    for i, cy in enumerate(result["cycles"]):
+                        st.markdown(f"**Cycle {i+1}** (seed={cy.get('seed')}): queries={cy.get('queries', [])}, ingested={cy.get('ingested_count', 0)}")
+            if result.get("reflection_suggestion"):
+                with st.expander("LLM reflection"):
+                    st.write(result["reflection_suggestion"])
+
+            config = load_config()
             try:
                 from goat_ts_cig.knowledge_graph import KnowledgeGraph
                 from goat_ts_cig.graph_viz import export_subgraph_png
-                node_id = result.get("node_id")
-                if node_id is not None:
-                    db_path = (config.get("graph") or {}).get("path", "data/knowledge_graph.db")
-                    if db_path and db_path != ":memory:":
-                        kg = KnowledgeGraph(db_path)
-                        out_path = os.path.join(ROOT, "data", "exports", "subgraph.png")
-                        os.makedirs(os.path.dirname(out_path), exist_ok=True)
-                        export_subgraph_png(kg, node_id, out_path, depth=2, engine="graphviz")
-                        st.image(out_path, caption="Graph (subgraph)", use_container_width=True)
-                        with open(out_path, "rb") as f:
-                            st.download_button("Download graph PNG", data=f.read(), file_name="subgraph.png", mime="image/png", key="dl_png")
-                        kg.close()
+                nid = result.get("node_id")
+                db = (config.get("graph") or {}).get("path", "data/knowledge_graph.db")
+                if nid is not None and db and db != ":memory:":
+                    kg = KnowledgeGraph(os.path.join(ROOT, db) if not os.path.isabs(db) else db)
+                    out = os.path.join(ROOT, "data", "exports", "subgraph.png")
+                    os.makedirs(os.path.dirname(out), exist_ok=True)
+                    export_subgraph_png(kg, nid, out, depth=2, engine="graphviz")
+                    st.image(out, caption="Graph (subgraph)", use_container_width=True)
+                    with open(out, "rb") as f:
+                        st.download_button("Download PNG", data=f.read(), file_name="subgraph.png", mime="image/png", key="dl_png")
+                    kg.close()
             except Exception as e:
-                st.caption(f"Graph viz skipped: {e}")
-        # Export JSON
-        out_json = json.dumps(result, indent=2)
-        st.download_button(
-            "Download result JSON",
-            data=out_json,
-            file_name="cig_result.json",
-            mime="application/json",
-            key="dl_json",
-        )
+                st.caption(f"Graph viz: {e}")
+
+            st.download_button(
+                "Export result JSON",
+                data=json.dumps(result, indent=2),
+                file_name="cig_result.json",
+                mime="application/json",
+                key="dl_json",
+            )
+            # Export CSV and GraphML from current graph DB
+            db = (config.get("graph") or {}).get("path", "data/knowledge_graph.db")
+            if db and db != ":memory:":
+                try:
+                    from goat_ts_cig.knowledge_graph import KnowledgeGraph
+                    from goat_ts_cig.export_utils import export_graph_csv, to_graphml
+                    kg = KnowledgeGraph(os.path.join(ROOT, db) if not os.path.isabs(db) else db)
+                    export_dir = os.path.join(ROOT, "data", "exports")
+                    os.makedirs(export_dir, exist_ok=True)
+                    csv_paths = export_graph_csv(kg, export_dir)
+                    gml_path = os.path.join(export_dir, "graph.graphml")
+                    to_graphml(kg, gml_path)
+                    kg.close()
+                    for p in csv_paths:
+                        if os.path.isfile(p):
+                            with open(p, "r", encoding="utf-8") as f:
+                                st.download_button(f"Download {os.path.basename(p)}", data=f.read(), file_name=os.path.basename(p), mime="text/csv", key=f"dl_{os.path.basename(p)}")
+                    if os.path.isfile(gml_path):
+                        with open(gml_path, "r", encoding="utf-8") as f:
+                            st.download_button("Download GraphML", data=f.read(), file_name="graph.graphml", mime="application/xml", key="dl_graphml")
+                except Exception as e:
+                    st.caption(f"Export CSV/GraphML: {e}")
