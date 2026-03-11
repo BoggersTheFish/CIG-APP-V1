@@ -122,6 +122,16 @@ class KnowledgeGraph:
                 out.append((r[0], float(dist)))
         return out
 
+    def get_embedding(self, node_id: int) -> list[float] | None:
+        """Return 384-d embedding for node_id if stored, else None."""
+        cur = self.conn.execute("SELECT embedding FROM vectors WHERE id = ?", (node_id,))
+        row = cur.fetchone()
+        if not row or not row[0]:
+            return None
+        blob = row[0]
+        n = len(blob) // 4  # float32
+        return list(struct.unpack(f"{n}f", blob))
+
     def add_node(
         self,
         label: str,

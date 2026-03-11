@@ -1,10 +1,12 @@
 """
 Autonomous exploration: multi-cycle query generation, optional web search, ingest, TS propagation.
 Phase 17, Steps 75-78: reflection cycles, multi-seed from config, curiosity bias for novel nodes.
+Optional: activation noise, hypothesis-driven query hints, tool registry for reproducibility.
 """
 from __future__ import annotations
 
 import os
+import random
 import time
 import yaml
 
@@ -38,18 +40,35 @@ def check_online_available(config: dict) -> tuple[bool, str]:
     return True, "Online search available."
 
 
+def _apply_activation_noise(kg, noise_level: float) -> None:
+    """Add uniform noise to node activations (for stochastic hypothesis diversity). Clamp to [0, 1]."""
+    if noise_level <= 0:
+        return
+    data = kg.to_json()
+    for n in data.get("nodes", []):
+        nid = n.get("id")
+        if nid is None:
+            continue
+        act = float(n.get("activation") or 0.0)
+        delta = (random.random() - 0.5) * noise_level
+        new_act = max(0.0, min(1.0, act + delta))
+        kg.update_node_activation(nid, new_act)
+
+
 def generate_next_queries(
     kg,
     seed_label: str,
     cycle_index: int,
     max_queries: int = 3,
     config: dict | None = None,
+    hypothesis_hints: list[str] | None = None,
 ) -> list[str]:
     """
     Heuristic / LLM-backed query generator for autonomous loop.
 
     - Cycle 0 returns [seed_label].
     - Later cycles return up to max_queries labels.
+    - If hypothesis_hints is provided, those labels are preferred for the next cycle.
     - If llm_ollama.enabled + use_for_autonomous: delegate to local LLM.
     - Otherwise: use activation-based heuristic, optionally biased by
       advanced_autonomous.curiosity_bias (0.0–1.0).
@@ -58,6 +77,14 @@ def generate_next_queries(
         return [seed_label]
 
     cfg = config or {}
+    queries: list[str] = []
+    if hypothesis_hints:
+        for h in hypothesis_hints[:max_queries]:
+            if h and isinstance(h, str) and h.strip() and h.strip() not in queries:
+                queries.append(h.strip())
+    if len(queries) >= max_queries:
+        return queries[:max_queries]
+
     ollama_cfg = (cfg.get("llm_ollama") or {})
     if ollama_cfg.get("enabled") and ollama_cfg.get("use_for_autonomous"):
         try:
@@ -101,7 +128,6 @@ def generate_next_queries(
         return (1.0 - curiosity) * a + curiosity * (1.0 - a)
 
     nodes_sorted = sorted(nodes, key=_score, reverse=True)
-    queries: list[str] = []
     for n in nodes_sorted:
         label = (n.get("label") or "").strip()
         if label and label != seed_label and label not in queries:
@@ -123,6 +149,7 @@ def run_autonomous_explore(
     seeds: list[str] | None = None,
     backup_before_run: bool = False,
     cooldown_seconds: int = 0,
+    tool_registry=None,
 ) -> dict:
     """
     Run autonomous exploration: multiple cycles of query generation, optional web search,
@@ -163,14 +190,19 @@ def run_autonomous_explore(
     total_requests = 0
     cycles_log: list[dict] = []
     result = None
+    adv_noise = float(adv.get("noise_level", 0.0))
+    use_hypothesis_hints = adv.get("hypothesis_hints", True)
+    last_hypothesis_labels: list[str] = []
 
     for seed in seeds:
         current_seed = seed.strip()
         if not current_seed:
             continue
         for cycle in range(max_cycles):
+            hypothesis_hints = last_hypothesis_labels if use_hypothesis_hints else None
             queries = generate_next_queries(
-                kg, current_seed, cycle, max_queries_per_cycle, config
+                kg, current_seed, cycle, max_queries_per_cycle, config,
+                hypothesis_hints=hypothesis_hints,
             )
             ingested_count = 0
             if use_online:
@@ -196,12 +228,33 @@ def run_autonomous_explore(
             )
             if result.get("error"):
                 result["cycles"] = cycles_log
+                if tool_registry is not None:
+                    result["tool_calls"] = getattr(tool_registry, "log", [])
                 return result
             for _ in range(reflection):
                 result = run_pipeline(current_seed, config=config, kg=kg)
                 if result.get("error"):
                     result["cycles"] = cycles_log
+                    if tool_registry is not None:
+                        result["tool_calls"] = getattr(tool_registry, "log", [])
                     return result
+            # Hypothesis-driven next cycle: use "to" node labels from top hypotheses
+            if use_hypothesis_hints and result.get("cig", {}).get("hypotheses"):
+                last_hypothesis_labels = []
+                for h in result["cig"]["hypotheses"][:5]:
+                    to_id = h.get("to")
+                    if to_id is not None:
+                        node = kg.get_node(to_id)
+                        if node and node.get("label"):
+                            last_hypothesis_labels.append(node["label"])
+            # Optional activation noise for stochastic diversity
+            if adv_noise > 0:
+                _apply_activation_noise(kg, adv_noise)
+            if tool_registry is not None and hasattr(tool_registry, "invoke"):
+                try:
+                    tool_registry.invoke("after_cycle", cycle_index=cycle, result=result, kg=kg)
+                except KeyError:
+                    pass
 
     if result is None:
         result = {"seed": seed_query, "config": config, "cig": {}, "graph": kg.to_json()}
@@ -244,6 +297,8 @@ def run_autonomous_explore(
             # Reflection is optional; ignore errors here.
             pass
 
+    if tool_registry is not None:
+        result["tool_calls"] = getattr(tool_registry, "log", [])
     return result
 
 

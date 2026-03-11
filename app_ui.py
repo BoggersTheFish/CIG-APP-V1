@@ -110,7 +110,7 @@ def check_all_deps(config: dict) -> list[tuple[str, bool, str | None, str]]:
         ok = _r.get(host.rstrip("/") + "/api/tags", timeout=2).status_code == 200
     except Exception:
         pass
-    deps.append(("Ollama (Local LLM)", ok, None, "For hypothesis phrasing and autonomous query expansion. Runs locally."))
+    deps.append(("Ollama (Local LLM)", ok, None, "Optional. For hypothesis phrasing and autonomous query expansion. Runs locally. Install from https://ollama.ai"))
 
     # Graphviz binary
     ok = False
@@ -126,7 +126,7 @@ def check_all_deps(config: dict) -> list[tuple[str, bool, str | None, str]]:
         ok = True
     except Exception:
         ok = False
-    deps.append(("Graphviz (Python)", ok, "graphviz", "Python wrapper for Graphviz rendering."))
+    deps.append(("Graphviz (Python)", ok, "graphviz", "Required for graph PNG when using Graphviz engine. Python wrapper for Graphviz."))
 
     # Matplotlib
     try:
@@ -134,7 +134,7 @@ def check_all_deps(config: dict) -> list[tuple[str, bool, str | None, str]]:
         ok = True
     except Exception:
         ok = False
-    deps.append(("Matplotlib", ok, "matplotlib", "Alternative engine for graph visualization."))
+    deps.append(("Matplotlib", ok, "matplotlib", "Optional. Alternative engine for graph visualization if Graphviz is unavailable."))
 
     # sentence-transformers
     try:
@@ -142,7 +142,7 @@ def check_all_deps(config: dict) -> list[tuple[str, bool, str | None, str]]:
         ok = True
     except Exception:
         ok = False
-    deps.append(("sentence-transformers", ok, "sentence-transformers", "Optional embeddings for similarity."))
+    deps.append(("sentence-transformers", ok, "sentence-transformers", "Optional. Embeddings for similarity-based hypotheses."))
 
     # sqlite-vss
     try:
@@ -150,7 +150,7 @@ def check_all_deps(config: dict) -> list[tuple[str, bool, str | None, str]]:
         ok = True
     except Exception:
         ok = False
-    deps.append(("sqlite-vss", ok, "sqlite-vss", "Optional vector search."))
+    deps.append(("sqlite-vss", ok, "sqlite-vss", "Optional. Vector search in the knowledge graph."))
 
     # PyPDF2
     try:
@@ -158,7 +158,7 @@ def check_all_deps(config: dict) -> list[tuple[str, bool, str | None, str]]:
         ok = True
     except Exception:
         ok = False
-    deps.append(("PyPDF2", ok, "PyPDF2", "PDF text ingestion."))
+    deps.append(("PyPDF2", ok, "PyPDF2", "Optional. PDF text ingestion from uploaded or local files."))
 
     # BeautifulSoup4
     try:
@@ -166,7 +166,7 @@ def check_all_deps(config: dict) -> list[tuple[str, bool, str | None, str]]:
         ok = True
     except Exception:
         ok = False
-    deps.append(("BeautifulSoup4", ok, "beautifulsoup4", "For web search result parsing."))
+    deps.append(("BeautifulSoup4", ok, "beautifulsoup4", "Optional. Web search result parsing in autonomous exploration."))
 
     return deps
 
@@ -230,7 +230,9 @@ with tab1:
     config = load_config()
     deps = check_all_deps(config)
     installed = sum(1 for (_, ok, _, _) in deps if ok)
-    st.progress(installed / len(deps) if deps else 1.0)
+    total = len(deps) if deps else 1
+    st.progress(installed / total)
+    st.caption(f"Dependencies: {installed}/{total} OK. Install missing ones below or use one-click pip where offered.")
 
     # Grid of dep cards (3 columns)
     cols = st.columns(3)
@@ -299,7 +301,7 @@ with tab1:
             except Exception as e:
                 st.error(f"Invalid YAML or write failed: {e}")
 
-    if st.button("Validate config", key="validate_cfg"):
+    if st.button("Validate config", key="validate_cfg", help="Run validate_config.py to check config.yaml and .env."):
         ok, msg = run_validate_config()
         if ok:
             st.success("Config valid!")
@@ -307,7 +309,7 @@ with tab1:
             st.error(msg)
 
     st.subheader("Step 3: Quick Test")
-    if st.button("Run sample test (Dry Run)", key="sample_test", disabled=_is_busy()):
+    if st.button("Run sample test (Dry Run)", key="sample_test", disabled=_is_busy(), help="Run a short pipeline with seed 'test' to verify setup (no LLM or online)."):
         _set_busy(True)
         with st.spinner("Running sample pipeline..."):
             try:
@@ -326,7 +328,7 @@ with tab1:
                 st.error(str(e))
         _set_busy(False)
 
-    if st.button("Complete setup", key="complete_setup"):
+    if st.button("Complete setup", key="complete_setup", help="Mark setup as done. This unlocks the full flow and remembers that you completed the wizard."):
         try:
             with open(SETUP_FLAG_PATH, "w") as f:
                 f.write("setup completed\n")
@@ -341,17 +343,21 @@ with tab1:
 # ========== Tab 2: Main Controls ==========
 with tab2:
     st.header("Main Controls")
+    setup_done_main = os.path.isfile(SETUP_FLAG_PATH)
+    if not setup_done_main:
+        st.warning("Complete the **Setup Wizard** (first tab) before running the pipeline.")
     config = load_config()
     seed = st.text_input(
         "Enter your seed concept (e.g., artificial intelligence)",
         value="artificial intelligence",
         key="seed_main",
+        help="The starting concept for exploration. TS propagation spreads activation from this node.",
     )
     mode = st.radio(
         "Run mode",
         ["Dry Run (Basic)", "Full Run (All Features)"],
         key="mode_main",
-        help="Dry: TS propagation and CIG only. Full: includes LLM, embeddings, graph viz, etc.",
+        help="Dry: TS propagation and CIG only (no LLM/embeddings/online). Full: all optional features.",
     )
     verbose = st.checkbox("Verbose monitoring (progress and stats)", value=True, key="verbose_main")
     st.session_state.verbose_monitoring = verbose
@@ -361,12 +367,12 @@ with tab2:
     run_autonomous = False
     if mode == "Full Run (All Features)":
         if not full_deps_ok:
-            st.warning("Some dependencies are missing. Install them in the Setup Wizard tab.")
-        run_autonomous = st.checkbox("Run autonomous (5 cycles)", value=False, key="run_auto_cb")
+            st.warning("Some dependencies are missing. Install them in the **Setup Wizard** tab.")
+        run_autonomous = st.checkbox("Run autonomous (5 cycles)", value=False, key="run_auto_cb", help="Run multiple cycles: query generation, optional web search, ingest, then TS propagation.")
 
-    run_disabled = _is_busy() or (mode == "Full Run (All Features)" and not full_deps_ok)
+    run_disabled = _is_busy() or (mode == "Full Run (All Features)" and not full_deps_ok) or not setup_done_main
 
-    if st.button("Run pipeline", type="primary", disabled=run_disabled, key="btn_run_main"):
+    if st.button("Run pipeline", type="primary", disabled=run_disabled, key="btn_run_main", help="Run a single pipeline (or autonomous exploration if checked). Results appear in Run & Results."):
         if not seed.strip():
             st.error("Enter a seed concept.")
         else:
@@ -426,6 +432,7 @@ with tab2:
                 st.session_state["_pipeline_queue"] = _q
                 _t = threading.Thread(target=_run_bg)
                 _t.start()
+                st.session_state["_pipeline_thread"] = _t
                 st.session_state.pipeline_running = True
                 st.session_state.pipeline_start_time = time.time()
                 st.rerun()
@@ -456,23 +463,25 @@ with tab2:
 # ========== Tab 3: Advanced Settings ==========
 with tab3:
     st.header("Advanced Settings")
+    st.caption("These options are written to config.yaml when you click Save. See CONFIG.md for full reference.")
     config = load_config()
     with st.expander("Autonomous exploration"):
         adv = config.get("advanced_autonomous") or {}
-        ref = st.number_input("Reflection cycles (extra runs per cycle)", 0, 10, int(adv.get("reflection_cycles", 3)), key="adv_ref")
-        multi = st.text_area("Multi-seed (one per line)", value="\n".join(adv.get("multi_seed") or []), height=60, key="adv_multi")
-        curiosity = st.slider("Curiosity bias (0=high activation, 1=novel nodes)", 0.0, 1.0, float(adv.get("curiosity_bias", 0.0)), 0.1, key="adv_curiosity")
-        llm_ref = st.checkbox("LLM reflection (Ollama summary after autonomous)", value=bool(adv.get("llm_reflection", False)), key="adv_llm_ref")
+        ref = st.number_input("Reflection cycles (extra runs per cycle)", 0, 10, int(adv.get("reflection_cycles", 3)), key="adv_ref", help="Extra propagation/reflection steps per autonomous cycle.")
+        multi = st.text_area("Multi-seed (one per line)", value="\n".join(adv.get("multi_seed") or []), height=60, key="adv_multi", help="Additional seeds to run in autonomous mode alongside the main seed.")
+        curiosity = st.slider("Curiosity bias (0=high activation, 1=novel nodes)", 0.0, 1.0, float(adv.get("curiosity_bias", 0.0)), 0.1, key="adv_curiosity", help="Higher values favor less-activated nodes when generating queries.")
+        llm_ref = st.checkbox("LLM reflection (Ollama summary after autonomous)", value=bool(adv.get("llm_reflection", False)), key="adv_llm_ref", help="Summarize autonomous run with Ollama when enabled.")
     with st.expander("LLM (Ollama)"):
         o = config.get("llm_ollama") or {}
-        st.text_input("Ollama host", value=o.get("host", "http://127.0.0.1:11434"), key="adv_ollama_host")
-        st.text_input("Ollama model", value=o.get("model", "llama2"), key="adv_ollama_model")
+        st.text_input("Ollama host", value=o.get("host", "http://127.0.0.1:11434"), key="adv_ollama_host", help="Base URL of your Ollama server.")
+        st.text_input("Ollama model", value=o.get("model", "llama2"), key="adv_ollama_model", help="Model name for hypotheses and autonomous queries.")
     with st.expander("Online & limits"):
         on = config.get("online") or {}
-        st.checkbox("Online search enabled", value=on.get("enabled", False), key="adv_online")
-        st.number_input("Max requests per run", 10, 100, int(on.get("max_requests_per_run", 30)), key="adv_max_req")
+        st.checkbox("Online search enabled", value=on.get("enabled", False), key="adv_online", help="Allow web search (DuckDuckGo) during autonomous exploration.")
+        st.number_input("Max requests per run", 10, 100, int(on.get("max_requests_per_run", 30)), key="adv_max_req", help="Cap on HTTP search requests per autonomous run.")
+        st.number_input("Request timeout (seconds)", 5, 60, int(on.get("timeout_seconds", 10)), key="adv_timeout")
 
-    if st.button("Save advanced settings", key="save_adv"):
+    if st.button("Save advanced settings", key="save_adv", help="Write current values to config.yaml."):
         cfg = load_config()
         cfg.setdefault("advanced_autonomous", {})
         cfg["advanced_autonomous"]["reflection_cycles"] = int(st.session_state.get("adv_ref", 3))
@@ -485,6 +494,7 @@ with tab3:
         cfg.setdefault("online", {})
         cfg["online"]["enabled"] = bool(st.session_state.get("adv_online", False))
         cfg["online"]["max_requests_per_run"] = int(st.session_state.get("adv_max_req", 30))
+        cfg["online"]["timeout_seconds"] = int(st.session_state.get("adv_timeout", 10))
         err = save_config(cfg)
         if err:
             st.error(err)
@@ -502,14 +512,46 @@ with tab4:
             st.error(result["error"])
         else:
             st.success(f"Seed **{result.get('seed', '')}** (node_id={result.get('node_id', '')})")
-            if st.session_state.get("verbose_monitoring"):
-                g = result.get("graph") or {}
-                st.caption(f"Stats: {len(g.get('nodes', []))} nodes, {len(g.get('edges', []))} edges")
+            result_config = load_config()
+            try:
+                from goat_ts_cig.knowledge_graph import KnowledgeGraph
+                from goat_ts_cig.monitoring import collect_metrics
+                db = (result_config.get("graph") or {}).get("path", "data/knowledge_graph.db")
+                db_path = (os.path.join(ROOT, db) if db and not os.path.isabs(db) else db) if db and db != ":memory:" else None
+                if db_path and os.path.isfile(db_path):
+                    kg_mon = KnowledgeGraph(db_path)
+                    metrics = collect_metrics(kg_mon, result)
+                    kg_mon.close()
+                    with st.expander("Monitoring", expanded=st.session_state.get("verbose_monitoring", True)):
+                        c1, c2, c3, c4 = st.columns(4)
+                        c1.metric("Nodes", metrics.get("node_count", 0))
+                        c2.metric("Edges", metrics.get("edge_count", 0))
+                        c3.metric("Activation (mean)", f"{metrics.get('activation_mean', 0):.3f}")
+                        c4.metric("Hypotheses", metrics.get("hypotheses_count", 0))
+                        if metrics.get("top_tension_edges"):
+                            st.caption("Top tension edges (conflict, activation difference)")
+                            st.dataframe(
+                                [{"from": e.get("from_label"), "to": e.get("to_label"), "tension": f"{e.get('tension', 0):.3f}"} for e in metrics["top_tension_edges"][:10]],
+                                use_container_width=True,
+                                hide_index=True,
+                            )
+                else:
+                    if st.session_state.get("verbose_monitoring"):
+                        g = result.get("graph") or {}
+                        st.caption(f"Stats: {len(g.get('nodes', []))} nodes, {len(g.get('edges', []))} edges")
+            except Exception as e:
+                if st.session_state.get("verbose_monitoring"):
+                    g = result.get("graph") or {}
+                    st.caption(f"Stats: {len(g.get('nodes', []))} nodes, {len(g.get('edges', []))} edges. Monitoring: {e}")
 
+            config = load_config()
             cig = result.get("cig") or {}
             if cig.get("idea_map"):
                 with st.expander("Idea map"):
                     st.json(cig["idea_map"])
+            if cig.get("context_expansion"):
+                with st.expander("Context expansion (clusters)"):
+                    st.json(cig["context_expansion"])
             if cig.get("hypotheses"):
                 with st.expander("Hypotheses"):
                     for h in cig["hypotheses"]:
@@ -554,13 +596,17 @@ with tab4:
             if db and db != ":memory:":
                 try:
                     from goat_ts_cig.knowledge_graph import KnowledgeGraph
-                    from goat_ts_cig.export_utils import export_graph_csv, to_graphml
+                    from goat_ts_cig.export_utils import export_graph_csv, to_graphml, to_rdf, to_neo4j_cypher
                     kg = KnowledgeGraph(os.path.join(ROOT, db) if not os.path.isabs(db) else db)
                     export_dir = os.path.join(ROOT, "data", "exports")
                     os.makedirs(export_dir, exist_ok=True)
                     csv_paths = export_graph_csv(kg, export_dir)
                     gml_path = os.path.join(export_dir, "graph.graphml")
                     to_graphml(kg, gml_path)
+                    rdf_path = os.path.join(export_dir, "graph.ttl")
+                    to_rdf(kg, rdf_path, format="turtle")
+                    cypher_path = os.path.join(export_dir, "graph.cypher")
+                    to_neo4j_cypher(kg, cypher_path)
                     kg.close()
                     for p in csv_paths:
                         if os.path.isfile(p):
@@ -569,5 +615,11 @@ with tab4:
                     if os.path.isfile(gml_path):
                         with open(gml_path, "r", encoding="utf-8") as f:
                             st.download_button("Download GraphML", data=f.read(), file_name="graph.graphml", mime="application/xml", key="dl_graphml")
+                    if os.path.isfile(rdf_path):
+                        with open(rdf_path, "r", encoding="utf-8") as f:
+                            st.download_button("Download RDF (Turtle)", data=f.read(), file_name="graph.ttl", mime="text/turtle", key="dl_rdf")
+                    if os.path.isfile(cypher_path):
+                        with open(cypher_path, "r", encoding="utf-8") as f:
+                            st.download_button("Download Neo4j Cypher", data=f.read(), file_name="graph.cypher", mime="text/plain", key="dl_cypher")
                 except Exception as e:
-                    st.caption(f"Export CSV/GraphML: {e}")
+                    st.caption(f"Export CSV/GraphML/RDF: {e}")

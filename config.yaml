@@ -7,6 +7,12 @@ wave:
   ticks: 10
   decay: 0.9
   activation_threshold: 0.5
+  # TS propagation options (Rust)
+  activation_fn: linear   # linear | tanh | capped
+  use_frontier: false      # true = only nodes above threshold push to neighbors
+  use_convergence: false   # true = run until delta < epsilon or max_ticks
+  max_ticks: 100
+  epsilon: 1e-5
 similarity_threshold: 0.3
 tension_threshold: 0.3
 llm: true
@@ -28,6 +34,8 @@ advanced_autonomous:
   multi_seed: []
   curiosity_bias: 0.0
   llm_reflection: false
+  noise_level: 0.0      # optional activation noise (e.g. 0.05) for stochastic diversity
+  hypothesis_hints: true # use last cycle hypotheses to drive next queries
 monitoring:
   show_progress: true
 advanced:
@@ -35,5 +43,15 @@ advanced:
     enabled: false
 vector:
   enabled: false
+  add_suggested_edges: false
+  # Vector-augmented activation (post-TS boost): alpha * sim * A_j from top-K similar nodes
+  alpha: 0.1
+  similarity_top_k: 5
+  similarity_threshold: 0.0
 ingestion:
   pdf_enabled: true
+# Resource caps for large graphs (enforced in pipeline and autonomous)
+resource_limits:
+  max_nodes: 50000       # fail run if graph exceeds this
+  max_ticks_per_run: 500 # cap wave.ticks
+  max_memory_mb: 0       # 0 = no check (future)

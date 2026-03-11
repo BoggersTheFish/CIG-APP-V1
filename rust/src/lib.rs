@@ -55,12 +55,18 @@ impl PyGraph {
         self.inner.get_node(id).map(|n| n.label.clone())
     }
 
+    #[pyo3(signature = (seed_id, ticks, decay, activation_threshold, activation_fn="linear", use_frontier=false, use_convergence=false, max_ticks=100, epsilon=1e-5))]
     fn full_ts_cycle(
         &mut self,
         seed_id: u32,
         ticks: u32,
         decay: f64,
         activation_threshold: f64,
+        activation_fn: &str,
+        use_frontier: bool,
+        use_convergence: bool,
+        max_ticks: u32,
+        epsilon: f64,
     ) {
         wave_engine::full_ts_cycle(
             &mut self.inner,
@@ -68,6 +74,11 @@ impl PyGraph {
             ticks,
             decay,
             activation_threshold,
+            activation_fn,
+            use_frontier,
+            use_convergence,
+            max_ticks,
+            epsilon,
         );
     }
 

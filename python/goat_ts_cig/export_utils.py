@@ -67,3 +67,71 @@ def export_cig_json(result_dict: dict, path: str) -> str:
     with open(path, "w", encoding="utf-8") as f:
         json.dump(result_dict, f, indent=2)
     return path
+
+
+def to_rdf(kg, path: str, format: str = "turtle") -> str:
+    """
+    Export knowledge graph to RDF (Turtle or N-Triples).
+    format: "turtle" | "nt". External tools (e.g. Neo4j with RDF plugin) can import the result.
+    """
+    data = kg.to_json()
+    base = "http://cig.example.org/"
+    lines = []
+    if format == "turtle":
+        lines.append("@prefix cig: <" + base + "> .")
+        lines.append("@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .")
+        lines.append("")
+    for n in data.get("nodes", []):
+        nid = n.get("id")
+        label = (n.get("label") or "").replace("\\", "\\\\").replace('"', '\\"')
+        act = float(n.get("activation") or 0)
+        state = (n.get("state") or "").replace("\\", "\\\\").replace('"', '\\"')
+        if format == "turtle":
+            lines.append(f"<{base}node/{nid}> rdf:type cig:Node ;")
+            lines.append(f'  cig:label "{label}" ;')
+            lines.append(f"  cig:activation {act} ;")
+            lines.append(f'  cig:state "{state}" .')
+        else:
+            lines.append(f"<{base}node/{nid}> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <{base}Node> .")
+            lines.append(f'<{base}node/{nid}> <{base}label> "{label}" .')
+            lines.append(f"<{base}node/{nid}> <{base}activation> \"{act}\"^^<http://www.w3.org/2001/XMLSchema#double> .")
+    for e in data.get("edges", []):
+        fr, to = e.get("from_id"), e.get("to_id")
+        if format == "turtle":
+            lines.append(f"<{base}node/{fr}> cig:relates <{base}node/{to}> .")
+        else:
+            lines.append(f"<{base}node/{fr}> <{base}relates> <{base}node/{to}> .")
+    d = os.path.dirname(path)
+    if d:
+        os.makedirs(d, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines))
+    return path
+
+
+def to_neo4j_cypher(kg, path: str) -> str:
+    """
+    Export graph as Cypher CREATE statements for Neo4j import.
+    Run the output file in Neo4j browser or via cypher-shell.
+    """
+    data = kg.to_json()
+    lines = ["// CIG-APP export for Neo4j", "// Create nodes then relationships.", ""]
+    for n in data.get("nodes", []):
+        nid = n.get("id")
+        label = (n.get("label") or "").replace("\\", "\\\\").replace("'", "\\'")
+        act = float(n.get("activation") or 0)
+        state = (n.get("state") or "").replace("'", "\\'")
+        lines.append(f"CREATE (n{nid}:Node {{id: {nid}, label: '{label}', activation: {act}, state: '{state}'}});")
+    lines.append("")
+    for e in data.get("edges", []):
+        fr, to = e.get("from_id"), e.get("to_id")
+        typ = (e.get("type") or "relates").replace("'", "\\'")
+        w = float(e.get("weight") or 1.0)
+        rel = "RELATES" if typ == "relates" else typ.upper().replace(" ", "_")
+        lines.append(f"MATCH (a:Node {{id: {fr}}}), (b:Node {{id: {to}}}) CREATE (a)-[:{rel} {{weight: {w}}}]->(b);")
+    d = os.path.dirname(path)
+    if d:
+        os.makedirs(d, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines))
+    return path

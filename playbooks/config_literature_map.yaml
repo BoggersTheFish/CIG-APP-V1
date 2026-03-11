@@ -1,0 +1,29 @@
+# Example config for literature / concept mapping (single seed, no online).
+# Copy to project root as config.yaml or merge into your config.
+graph:
+  path: data/knowledge_graph.db
+wave:
+  ticks: 15
+  decay: 0.9
+  activation_threshold: 0.5
+  activation_fn: linear
+  use_frontier: false
+similarity_threshold: 0.35
+tension_threshold: 0.3
+llm: false
+online:
+  enabled: false
+  max_requests_per_run: 20
+  timeout_seconds: 10
+llm_ollama:
+  enabled: false
+export:
+  default_dir: data/exports
+advanced_autonomous:
+  reflection_cycles: 0
+  multi_seed: []
+  curiosity_bias: 0.0
+  llm_reflection: false
+resource_limits:
+  max_nodes: 10000
+  max_ticks_per_run: 100

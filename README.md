@@ -41,12 +41,14 @@ python -m streamlit run app_ui.py
 
 (If `streamlit` is on your PATH you can use `streamlit run app_ui.py` instead.)
 
-The UI is a **single main page** with:
+The UI is **wizard-first** with tabs:
 
-- **Seed concept** — e.g. "artificial intelligence".
-- **Mode** — **Dry Run (Basic)** (TS propagation, graph, CIG only; no LLM/embeddings/online) or **Full Run (All Features)** (all optional deps required).
-- **Run** — runs the pipeline (or autonomous exploration if "Run autonomous (5 cycles)" is checked in Full mode).
-- **Sidebar** — UI theme (light/dark); **6. Advanced Features** expander: dependency checks (Ollama, Graphviz, Matplotlib), Ollama host/model, graph visualization, CSV/GraphML export, autonomous settings (reflection cycles, multi-seed, curiosity bias, LLM reflection), and Save.
+- **Setup Wizard** — First-run: check dependencies (Ollama, Graphviz, Matplotlib, sentence-transformers, sqlite-vss, PyPDF2, BeautifulSoup4), edit `.env` and `config.yaml`, validate config, run a sample test, then **Complete setup**.
+- **Main Controls** — Seed concept, Dry Run (Basic) or Full Run (All Features), optional "Run autonomous (5 cycles)", and **Run pipeline**. Complete the Setup Wizard before running.
+- **Advanced Settings** — Autonomous (reflection cycles, multi-seed, curiosity bias, LLM reflection), LLM (Ollama host/model), online limits; saved to `config.yaml`.
+- **Run & Results** — Idea map, context expansion, hypotheses, cycles, Monitoring metrics, graph preview, and exports (CSV, GraphML, JSON, RDF, Neo4j Cypher).
+
+Theme (light/dark) is in the header.
 
 **Verbose monitoring** — checkbox to show progress and post-run stats (node/edge counts). Single pipeline runs execute in a background thread so the UI shows "Running pipeline… (N s)" and a progress phase.
 
@@ -96,12 +98,12 @@ In **6. Advanced Features** you can configure:
 - **Advanced autonomous**: Reflection cycles (extra propagation steps per cycle) and multiple seeds (run autonomous for each seed in sequence). Config: `advanced_autonomous.reflection_cycles`, `advanced_autonomous.multi_seed`.
 - **Monitoring**: Option "Show progress during run" (`monitoring.show_progress`) for progress display when running the pipeline.
 
-See `config.yaml` and `.env.example` for all keys.
+See **CONFIG.md** for a full key reference and how `.env` overrides map into config; **ARCHITECTURE.md** for system design, data flow, and schema; **TS_MODEL.md** for propagation equations and options. Example workflows and configs: **playbooks/**.
 
 ## Design
 
-- **Knowledge graph**: SQLite tables `nodes` (id, label, mass, activation, state, metadata) and `edges` (from_id, to_id, type, weight).
-- **TS propagation**: Implemented in Rust (wave engine + constraint resolution + decay + state updates). Python syncs the graph to Rust, runs a full TS cycle, then writes activations/states back.
+- **Knowledge graph**: SQLite tables `nodes` (id, label, mass, activation, state, metadata) and `edges` (from_id, to_id, type, weight). Optional vectors/sqlite-vss for embeddings.
+- **TS propagation**: Implemented in Rust (wave engine + constraint resolution + decay + state updates). Options: frontier-based propagation, activation functions (linear/tanh/capped), convergence stopping. See **TS_MODEL.md** for equations and config.
 - **CIG outputs**: Idea map (BFS subgraph around seed), context expansion (connected-component clusters), evidence chains (shortest path), and hypothesis suggestions (similarity + tension on conflict edges).
 
 ## Tests

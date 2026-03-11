@@ -1,8 +1,9 @@
 """
 Benchmark: time propagation / full cycle on N nodes.
 Phase 19: optional pipeline and export timings.
-Run from project root: python benchmark.py
+CLI: python benchmark.py [--nodes 500] [--ticks 10] [--runs 5] [--frontier] [--pipeline] [--export]
 """
+import argparse
 import os
 import sys
 import time
@@ -13,7 +14,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "python"))
 from goat_ts_cig.knowledge_graph import KnowledgeGraph
 
 
-def bench_full_cycle(n_nodes: int = 500, ticks: int = 10, number: int = 5):
+def bench_full_cycle(n_nodes: int = 500, ticks: int = 10, number: int = 5, use_frontier: bool = False):
     kg = KnowledgeGraph(":memory:")
     for i in range(n_nodes):
         kg.add_node(f"node_{i}")
@@ -24,9 +25,9 @@ def bench_full_cycle(n_nodes: int = 500, ticks: int = 10, number: int = 5):
         print("Rust extension not built; skipping benchmark.")
         return
     def run():
-        rg.full_ts_cycle(0, ticks=ticks, decay=0.9, activation_threshold=0.5)
+        rg.full_ts_cycle(0, ticks, 0.9, 0.5, activation_fn="linear", use_frontier=use_frontier, use_convergence=False, max_ticks=100, epsilon=1e-5)
     t = timeit.timeit(run, number=number)
-    print(f"Nodes: {n_nodes}, Ticks: {ticks}, Runs: {number}")
+    print(f"Nodes: {n_nodes}, Ticks: {ticks}, Frontier: {use_frontier}, Runs: {number}")
     print(f"Total: {t:.3f}s, Per run: {t/number:.3f}s")
 
 
@@ -65,8 +66,24 @@ def bench_export_csv(n_nodes: int = 200):
         print("Export CSV benchmark skipped:", e)
 
 
+def main():
+    p = argparse.ArgumentParser(description="CIG-APP benchmarks")
+    p.add_argument("--nodes", type=int, default=500, help="Graph size for propagation benchmark")
+    p.add_argument("--ticks", type=int, default=10, help="Ticks per run")
+    p.add_argument("--runs", type=int, default=5, help="Number of runs to average")
+    p.add_argument("--frontier", action="store_true", help="Use frontier-based propagation")
+    p.add_argument("--pipeline", action="store_true", help="Also run pipeline benchmark")
+    p.add_argument("--export", action="store_true", help="Also run export benchmark")
+    args = p.parse_args()
+    print("=== Propagation ===")
+    bench_full_cycle(args.nodes, args.ticks, args.runs, use_frontier=args.frontier)
+    if args.pipeline:
+        print("=== Pipeline ===")
+        bench_pipeline_once()
+    if args.export:
+        print("=== Export CSV ===")
+        bench_export_csv(min(args.nodes, 500))
+
+
 if __name__ == "__main__":
-    bench_full_cycle(500, number=10)
-    bench_full_cycle(1000, number=5)
-    bench_pipeline_once()
-    bench_export_csv(200)
+    main()

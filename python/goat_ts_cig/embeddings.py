@@ -42,3 +42,27 @@ def available() -> bool:
         return True
     except Exception:
         return False
+
+
+def embed_safe(text: str) -> list[float] | None:
+    """Embed a single text. Returns 384-d vector or None if embeddings unavailable."""
+    try:
+        if not available():
+            return None
+        return embed(text)
+    except Exception:
+        return None
+
+
+def embed_batch_safe(texts: list[str]) -> list[list[float]]:
+    """Embed multiple texts. Returns list of vectors (or empty list if unavailable)."""
+    try:
+        if not texts or not available():
+            return []
+        return embed_batch(texts)
+    except Exception:
+        return []
+
+
+# Dimension for all-MiniLM-L6-v2; required for sqlite-vss in this codebase
+EMBEDDING_DIM = 384

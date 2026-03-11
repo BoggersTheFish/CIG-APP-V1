@@ -115,6 +115,23 @@ def generate_hypotheses(kg, rg=None, id_map=None, similarity_threshold: float = 
                 "score": abs(act_a - act_b),
             })
 
+    # Optionally add "suggested_relates" edges for similarity-based hypotheses (config-controlled)
+    add_suggested = (config.get("vector") or {}).get("add_suggested_edges", False)
+    similarity_reasons = ("similarity > threshold", "embedding similarity > threshold", "vector similarity (sqlite-vss)")
+    if add_suggested and hasattr(kg, "add_edge"):
+        added_pairs = set()
+        for h in hypotheses:
+            if h.get("reason") not in similarity_reasons:
+                continue
+            a, b = h["from"], h["to"]
+            if (a, b) in added_pairs or (b, a) in added_pairs:
+                continue
+            try:
+                kg.add_edge(a, b, "suggested_relates", float(h.get("score", 0.5)))
+                added_pairs.add((a, b))
+            except Exception:
+                pass
+
     if use_llm and config.get("llm"):
         ollama_cfg = config.get("llm_ollama") or {}
         if ollama_cfg.get("enabled") and ollama_cfg.get("use_for_hypotheses"):
