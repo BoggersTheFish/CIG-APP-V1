@@ -11,3 +11,5 @@ duckduckgo-search>=4.0
 # Optional: pip install matplotlib networkx
 # Optional (embeddings): pip install sentence-transformers
 sentence-transformers>=2.2
+# Optional (vector search): pip install sqlite-vss
+sqlite-vss>=0.1.0

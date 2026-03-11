@@ -216,6 +216,7 @@ def _check_optional_deps(config: dict) -> list[tuple[str, bool, list[str] | None
         _optional_dep_spec("Matplotlib", "matplotlib", ["matplotlib"]),
         _optional_dep_spec("BeautifulSoup (search)", "bs4", None),
         _optional_dep_spec("Sentence Transformers (embeddings)", "sentence_transformers", ["sentence-transformers"]),
+        _optional_dep_spec("sqlite-vss (vector search)", "sqlite_vss", ["sqlite-vss"]),
     ]:
         ok = importlib.util.find_spec(mod) is not None
         result.append((name, ok, pip))
@@ -721,6 +722,17 @@ elif step == "2. Configuration":
         if "embeddings" not in config["advanced"]:
             config["advanced"]["embeddings"] = {}
         config["advanced"]["embeddings"]["enabled"] = emb_enabled
+        vector_enabled = st.checkbox(
+            "Enable vector search (sqlite-vss)",
+            value=bool((config.get("vector") or {}).get("enabled", False)),
+            help="Use sqlite-vss for vector similarity search in hypotheses when installed.",
+            key="cfg_vector",
+        )
+        if not any(x[0] == "sqlite-vss (vector search)" and x[1] for x in _check_optional_deps(config)):
+            st.caption("Install: pip install sqlite-vss (see Feature status in sidebar).")
+        if "vector" not in config:
+            config["vector"] = {}
+        config["vector"]["enabled"] = vector_enabled
 
     with st.expander("LLM (optional)"):
         use_llm = st.checkbox(

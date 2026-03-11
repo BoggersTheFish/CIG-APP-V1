@@ -1,8 +1,18 @@
 """
 Knowledge Graph Engine: SQLite-backed graph (nodes/edges).
+Optional: sqlite-vss for vector search when vector.enabled.
 """
 import os
 import sqlite3
+import struct
+
+
+def _vector_extension_available() -> bool:
+    try:
+        import sqlite_vss  # noqa: F401
+        return True
+    except Exception:
+        return False
 
 
 class KnowledgeGraph:
@@ -10,6 +20,7 @@ class KnowledgeGraph:
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
         self.conn = sqlite3.connect(path)
         self.conn.row_factory = sqlite3.Row
+        self._vss_loaded = False
         self.create_tables()
 
     def create_tables(self) -> None:
@@ -42,7 +53,74 @@ class KnowledgeGraph:
         self.conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_edges_to ON edges(to_id)"
         )
+        self.conn.execute(
+            "CREATE TABLE IF NOT EXISTS vectors (id INTEGER PRIMARY KEY, embedding BLOB)"
+        )
         self.conn.commit()
+
+    def _ensure_vss(self) -> bool:
+        if self._vss_loaded:
+            return True
+        if not _vector_extension_available():
+            return False
+        try:
+            import sqlite_vss
+            self.conn.enable_load_extension(True)
+            sqlite_vss.load(self.conn)
+            self.conn.execute(
+                "CREATE VIRTUAL TABLE IF NOT EXISTS vss_embed USING vss0(embedding(384))"
+            )
+            self.conn.execute(
+                "CREATE TABLE IF NOT EXISTS vector_node_map (node_id INTEGER PRIMARY KEY, vss_rowid INTEGER)"
+            )
+            self.conn.commit()
+            self._vss_loaded = True
+            return True
+        except Exception:
+            return False
+
+    def add_vector(self, node_id: int, embedding: list[float]) -> None:
+        """Store or replace vector for node_id. Requires sqlite-vss and 384-dim embedding."""
+        if not self._ensure_vss() or len(embedding) != 384:
+            return
+        blob = struct.pack(f"{len(embedding)}f", *embedding)
+        cur = self.conn.execute("SELECT vss_rowid FROM vector_node_map WHERE node_id = ?", (node_id,))
+        row = cur.fetchone()
+        if row:
+            self.conn.execute("DELETE FROM vss_embed WHERE rowid = ?", (row[0],))
+        self.conn.execute("INSERT INTO vss_embed(embedding) VALUES (?)", (blob,))
+        vss_rowid = self.conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+        self.conn.execute(
+            "INSERT OR REPLACE INTO vector_node_map (node_id, vss_rowid) VALUES (?, ?)",
+            (node_id, vss_rowid),
+        )
+        self.conn.execute(
+            "INSERT OR REPLACE INTO vectors (id, embedding) VALUES (?, ?)",
+            (node_id, blob),
+        )
+        self.conn.commit()
+
+    def query_similar_vectors(self, embedding: list[float], limit: int = 10) -> list[tuple[int, float]]:
+        """Return list of (node_id, distance) for nearest vectors. Requires sqlite-vss."""
+        if not self._ensure_vss() or len(embedding) != 384:
+            return []
+        blob = struct.pack(f"{len(embedding)}f", *embedding)
+        try:
+            cur = self.conn.execute(
+                "SELECT rowid, distance FROM vss_embed WHERE vss_search(embedding, ?) LIMIT ?",
+                (blob, limit),
+            )
+            rows = cur.fetchall()
+        except Exception:
+            return []
+        out = []
+        for vss_rowid, dist in rows:
+            r = self.conn.execute(
+                "SELECT node_id FROM vector_node_map WHERE vss_rowid = ?", (vss_rowid,)
+            ).fetchone()
+            if r:
+                out.append((r[0], float(dist)))
+        return out
 
     def add_node(
         self,

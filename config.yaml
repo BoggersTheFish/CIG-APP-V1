@@ -27,3 +27,5 @@ monitoring:
 advanced:
   embeddings:
     enabled: false
+vector:
+  enabled: false

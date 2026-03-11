@@ -64,6 +64,38 @@ def generate_hypotheses(kg, rg=None, id_map=None, similarity_threshold: float = 
         except Exception:
             pass
 
+    # Vector search (sqlite-vss) when enabled
+    if (config.get("vector") or {}).get("enabled"):
+        try:
+            from goat_ts_cig.embeddings import available as emb_available, embed_batch
+            if emb_available() and hasattr(kg, "add_vector") and hasattr(kg, "query_similar_vectors"):
+                node_list = data.get("nodes", [])
+                if len(node_list) <= 200:
+                    labels = [(n.get("label") or "").strip() or f"id{n['id']}" for n in node_list]
+                    vecs = embed_batch(labels)
+                    for n, vec in zip(node_list, vecs):
+                        if len(vec) == 384:
+                            kg.add_vector(n["id"], vec)
+                    for i, n in enumerate(node_list):
+                        vec = vecs[i] if i < len(vecs) else None
+                        if not vec or len(vec) != 384:
+                            continue
+                        for other_id, dist in kg.query_similar_vectors(vec, limit=15):
+                            if other_id == n["id"]:
+                                continue
+                            if (n["id"], other_id) in edge_set or (other_id, n["id"]) in edge_set:
+                                continue
+                            sim = 1.0 / (1.0 + float(dist)) if float(dist) >= 0 else 1.0
+                            if sim >= similarity_threshold:
+                                hypotheses.append({
+                                    "from": n["id"],
+                                    "to": other_id,
+                                    "reason": "vector similarity (sqlite-vss)",
+                                    "score": sim,
+                                })
+        except Exception:
+            pass
+
     # Tension-based: conflict edges with high activation difference
     tension_thresh = config.get("tension_threshold", 0.3)
     for e in data["edges"]:
