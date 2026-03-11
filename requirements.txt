@@ -13,5 +13,5 @@ networkx>=3.0
 # Optional (embeddings): pip install sentence-transformers
 sentence-transformers>=2.2
 # Optional (vector search): pip install sqlite-vss
-sqlite-vss>=0.1.0
+sqlite-vec>=0.1.0
 PyPDF2>=3.0

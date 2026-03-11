@@ -62,7 +62,7 @@ While any long operation is running, the app:
 - Disables all other action buttons (prevents accidental double-runs).
 - Shows progress bars and status messages for the running job.
 
-**New UI controls:** Feature status (sidebar) with one-click installs; theme toggle (light/dark); human-in-loop pause in Autonomous; optional embeddings (sentence-transformers) and vector search (sqlite-vss); backup/restore before autonomous; export preview and GraphML; PDF ingest (PyPDF2). See Step 6 and Optional Tools for toggles.
+**New UI controls:** Feature status (sidebar) with one-click installs; theme toggle (light/dark); human-in-loop pause in Autonomous; optional embeddings (sentence-transformers) and vector search (sqlite-vss); backup/restore before autonomous; export preview and GraphML; PDF ingest (PyPDF2). **Developer mode** (Step 1 – Setup): enable “Developer mode (show debug menus in all tabs)” to see Debug expanders in every step (session state, config, pipeline/autonomous state). Pipeline runs (non-autonomous) show “Running pipeline… (N s)” while executing. See Step 6 and Optional Tools for toggles.
 
 ---
 

@@ -9,6 +9,7 @@ import json
 import os
 import subprocess
 import sys
+import threading
 import time
 import webbrowser
 from types import SimpleNamespace
@@ -28,6 +29,11 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+# Background pipeline run (so UI can show "Running..." while blocking work runs)
+_pipeline_thread = None
+_pipeline_result = [None]
+_pipeline_error = [None]
+
 CONFIG_PATH = os.path.join(ROOT, "config.yaml")
 
 # Global lock: when any long-running operation is in progress, other action buttons are disabled
@@ -45,6 +51,11 @@ def _set_busy(busy: bool) -> None:
 
 def _is_busy() -> bool:
     return st.session_state.get("cig_operation_in_progress", False)
+
+
+def _developer_mode() -> bool:
+    """True if developer mode is enabled (Setup tab checkbox)."""
+    return st.session_state.get("developer_mode", False)
 
 
 def _append_log(msg: str) -> None:
@@ -331,6 +342,14 @@ with st.expander("Activity details (what the app is doing)", expanded=False):
 if step == "1. Setup":
     st.header("1. Setup")
     st.markdown("Walk through environment checks and install steps.")
+    if "developer_mode" not in st.session_state:
+        st.session_state.developer_mode = False
+    st.checkbox(
+        "Developer mode (show debug menus in all tabs)",
+        value=st.session_state.developer_mode,
+        key="developer_mode",
+        help="Enable debug expanders across the app to inspect state, config, and results.",
+    )
     c1, c2 = st.columns(2)
     with c1:
         st.subheader("Environment checks")
@@ -636,6 +655,14 @@ if step == "1. Setup":
     if py_ok and pip_ok:
         st.success("Environment ready. Continue to **Configuration** then **Run & Explore**.")
 
+    if _developer_mode():
+        with st.expander("Debug", expanded=False):
+            st.caption("Session state keys (sample)")
+            keys = [k for k in sorted(st.session_state.keys()) if not k.startswith("_")]
+            st.code("\n".join(keys[:80]) if keys else "(none)", language="text")
+            st.caption("ROOT, sys.path[:5]")
+            st.code(f"ROOT = {ROOT}\nsys.path[:5] = {sys.path[:5]}", language="text")
+
 # ----- 2. Configuration -----
 elif step == "2. Configuration":
     st.header("2. Configuration")
@@ -789,11 +816,42 @@ elif step == "2. Configuration":
     except Exception:
         st.code(json.dumps(config, indent=2), language="json")
 
+    if _developer_mode():
+        with st.expander("Debug", expanded=False):
+            st.caption("Config (raw dict)")
+            st.json(config)
+
 # ----- 3. Run & Explore -----
 elif step == "3. Run & Explore":
     st.header("3. Run & Explore")
     st.markdown("Set a seed concept, optionally ingest text, then run the CIG pipeline.")
     config = load_config()
+
+    # Show "Running pipeline..." while background pipeline thread is active
+    if st.session_state.get("pipeline_running"):
+        if _pipeline_thread is not None and not _pipeline_thread.is_alive():
+            _set_busy(False)
+            st.session_state.pipeline_running = False
+            if _pipeline_error[0] is not None:
+                st.session_state["last_run_result"] = {"error": str(_pipeline_error[0])}
+                _append_log(f"Pipeline run raised an exception: {_pipeline_error[0]}")
+            else:
+                res = _pipeline_result[0]
+                st.session_state["last_run_result"] = res
+                if res and not res.get("error"):
+                    g = res.get("graph") or {}
+                    _append_log(f"Result: seed={res.get('seed')} node_id={res.get('node_id')} nodes={len(g.get('nodes', []))} edges={len(g.get('edges', []))}")
+            _pipeline_thread = None
+            _pipeline_result[0] = None
+            _pipeline_error[0] = None
+            _append_log("Finished: pipeline run.")
+            st.rerun()
+        else:
+            elapsed = int(time.time() - st.session_state.get("pipeline_start_time", time.time()))
+            st.info(f"⏳ **Running pipeline...** ({elapsed} s) — please wait.")
+            time.sleep(1)
+            st.rerun()
+
     if "run_seed" not in st.session_state:
         st.session_state.run_seed = "AI"
     seed = st.text_input(
@@ -885,62 +943,66 @@ elif step == "3. Run & Explore":
     if st.button("Run pipeline", type="primary", disabled=_is_busy(), key="btn_run_pipeline"):
         if not seed:
             st.error("Enter a seed concept.")
-        else:
+        elif autonomous_mode:
+            # Autonomous runs in foreground (longer; status shown when done)
             _set_busy(True)
             try:
-                mode_label = "autonomous exploration" if autonomous_mode else "pipeline"
+                mode_label = "autonomous exploration"
                 _append_log(f"Starting: {mode_label} run with seed '{seed}' (ingest={ingest_option}, show_progress={show_progress}).")
-                def _progress_cb(cur, tot, msg):
-                    if tot and tot > 0:
-                        st.session_state["_prog"] = (cur, tot, msg)
-                spinner_msg = "Running pipeline..." if not autonomous_mode else "Running autonomous exploration..."
-                if show_progress:
-                    spinner_msg = "Running propagation..."
-                prog = st.progress(0, text=spinner_msg)
-                with st.status(spinner_msg, expanded=True):
+                prog = st.progress(0, text="Running autonomous exploration...")
+                with st.status("Running autonomous exploration...", expanded=True):
                     try:
-                        if autonomous_mode:
-                            from goat_ts_cig.autonomous_explore import run_autonomous_explore
-                            online_override = False if (not online_ok or run_local_only) else None
-                            adv = config.get("advanced_autonomous") or {}
-                            seeds_list = [seed] + (adv.get("multi_seed") or [])
-                            result = run_autonomous_explore(
-                                seed,
-                                config_path=CONFIG_PATH,
-                                config=config,
-                                max_cycles=5,
-                                max_queries_per_cycle=3,
-                                online_override=online_override,
-                                seeds=seeds_list if len(seeds_list) > 1 else None,
-                            )
-                        else:
-                            from goat_ts_cig.main import run_pipeline
-                            result = run_pipeline(
-                                seed=seed,
-                                config_path=CONFIG_PATH,
-                                config=config,
-                                ingest_text=ingest_text or None,
-                                ticks_override=ticks_override,
-                                progress_callback=_progress_cb if show_progress else None,
-                            )
+                        from goat_ts_cig.autonomous_explore import run_autonomous_explore
+                        online_override = False if (not online_ok or run_local_only) else None
+                        adv = config.get("advanced_autonomous") or {}
+                        seeds_list = [seed] + (adv.get("multi_seed") or [])
+                        result = run_autonomous_explore(
+                            seed,
+                            config_path=CONFIG_PATH,
+                            config=config,
+                            max_cycles=5,
+                            max_queries_per_cycle=3,
+                            online_override=online_override,
+                            seeds=seeds_list if len(seeds_list) > 1 else None,
+                        )
                     except Exception as e:
                         st.exception(e)
                         result = {"error": str(e)}
                         _append_log(f"{mode_label.capitalize()} run raised an exception: {e}")
                     st.session_state["last_run_result"] = result
                     if result and not result.get("error"):
-                        g = result.get("graph") or {}
-                        n_nodes = len(g.get("nodes", []))
-                        n_edges = len(g.get("edges", []))
-                        _append_log(f"Result: seed={result.get('seed')} node_id={result.get('node_id')} rust_used={result.get('rust_used')} nodes={n_nodes} edges={n_edges}")
                         for i, cy in enumerate(result.get("cycles") or []):
-                            q = cy.get("queries", [])
-                            ing = cy.get("ingested_count", 0)
-                            _append_log(f"  Cycle {i+1}: queries={q}, ingested={ing}")
+                            _append_log(f"  Cycle {i+1}: queries={cy.get('queries', [])}, ingested={cy.get('ingested_count', 0)}")
                 prog.progress(1.0, text="Done.")
             finally:
                 _append_log(f"Finished: {mode_label} run.")
                 _set_busy(False)
+        else:
+            # Pipeline run in background so "Running..." shows immediately
+            _append_log(f"Starting: pipeline run with seed '{seed}' (ingest={ingest_option}).")
+            _set_busy(True)
+            _pipeline_result[0] = None
+            _pipeline_error[0] = None
+
+            def _run_pipeline_bg():
+                try:
+                    from goat_ts_cig.main import run_pipeline
+                    _pipeline_result[0] = run_pipeline(
+                        seed=seed,
+                        config_path=CONFIG_PATH,
+                        config=config,
+                        ingest_text=ingest_text or None,
+                        ticks_override=ticks_override,
+                        progress_callback=None,
+                    )
+                except Exception as e:
+                    _pipeline_error[0] = e
+
+            _pipeline_thread = threading.Thread(target=_run_pipeline_bg)
+            _pipeline_thread.start()
+            st.session_state.pipeline_running = True
+            st.session_state.pipeline_start_time = time.time()
+            st.rerun()
 
     result = st.session_state.get("last_run_result")
     if result:
@@ -988,6 +1050,21 @@ elif step == "3. Run & Explore":
                     st.dataframe(g["nodes"], use_container_width=True, hide_index=True)
             with tab5:
                 st.json(result)
+
+    if _developer_mode():
+        with st.expander("Debug", expanded=False):
+            last = st.session_state.get("last_run_result")
+            st.caption("last_run_result keys, pipeline_running, pipeline thread")
+            info = {
+                "last_run_result_keys": list(last.keys()) if isinstance(last, dict) else type(last).__name__,
+                "pipeline_running": st.session_state.get("pipeline_running", False),
+                "pipeline_thread_alive": getattr(_pipeline_thread, "is_alive", lambda: False)(),
+            }
+            st.json(info)
+            if last and isinstance(last, dict) and not last.get("error"):
+                g = last.get("graph") or {}
+                st.metric("Graph nodes", len(g.get("nodes", [])))
+                st.metric("Graph edges", len(g.get("edges", [])))
 
 # ----- 4. Optional Tools -----
 elif step == "4. Optional Tools":
@@ -1101,6 +1178,11 @@ elif step == "4. Optional Tools":
                     _set_busy(False)
         else:
             st.info(f"No database file at `{abs_db}` yet.")
+
+    if _developer_mode():
+        with st.expander("Debug", expanded=False):
+            st.caption("Optional Tools state")
+            st.json({"db_path": db_path, "abs_db": abs_db, "tool": tool})
 
 # ----- 5. Autonomous Exploration -----
 elif step == "5. Autonomous Exploration":
@@ -1337,6 +1419,17 @@ elif step == "5. Autonomous Exploration":
         if st.button("Clear result", key="clear_auto_result", disabled=_is_busy()):
             del st.session_state["last_autonomous_result"]
             st.rerun()
+
+    if _developer_mode():
+        with st.expander("Debug", expanded=False):
+            auto_result = st.session_state.get("last_autonomous_result")
+            hilo = st.session_state.get("autonomous_human_loop") or {}
+            st.caption("Autonomous state")
+            st.json({
+                "last_autonomous_result_keys": list(auto_result.keys()) if isinstance(auto_result, dict) else str(type(auto_result)),
+                "autonomous_human_loop": hilo,
+                "error": auto_result.get("error") if isinstance(auto_result, dict) else None,
+            })
 
 # ----- 6. Advanced Features -----
 elif step == "6. Advanced Features":
@@ -1705,3 +1798,11 @@ elif step == "6. Advanced Features":
             "This UI currently targets the short-term, single-machine path; future versions may add export hooks for "
             "multi-shard or distributed execution."
         )
+
+    if _developer_mode():
+        with st.expander("Debug", expanded=False):
+            st.caption("Monitoring & advanced_autonomous (snippet)")
+            st.json({
+                "monitoring": config.get("monitoring"),
+                "advanced_autonomous": config.get("advanced_autonomous"),
+            })

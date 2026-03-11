@@ -113,7 +113,7 @@ python benchmark.py
 
 ## Improvements
 
-Added license (MIT), sidebar Feature status and one-click installs, export previews and downloads, curiosity bias and LLM reflection for autonomous mode, dashboard (activation overview), scaling notes in UI, theme toggle, human-in-loop pause, embeddings (optional), vector search (optional), PDF ingestion, GraphML export, undo/backup.
+Added license (MIT), sidebar Feature status and one-click installs, export previews and downloads, curiosity bias and LLM reflection for autonomous mode, dashboard (activation overview), scaling notes in UI, theme toggle, human-in-loop pause, embeddings (optional), vector search (optional), PDF ingestion, GraphML export, undo/backup. Later: pipeline run feedback (“Running pipeline…” while non-autonomous run executes), Streamlit session-state fixes, **developer mode** in Setup (debug menus in all tabs).
 
 ## License
 
