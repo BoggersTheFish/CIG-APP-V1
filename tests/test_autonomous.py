@@ -40,3 +40,30 @@ def test_autonomous_local_only():
     assert len(r["cycles"]) == 2
     assert r.get("seed") == "AI"
     assert "cig" in r
+
+
+def test_autonomous_reflection_cycles():
+    from goat_ts_cig.autonomous_explore import run_autonomous_explore
+    config = {
+        "graph": {"path": ":memory:"},
+        "wave": {"ticks": 2, "decay": 0.9, "activation_threshold": 0.5},
+        "online": {"enabled": False, "max_requests_per_run": 30, "timeout_seconds": 10},
+        "advanced_autonomous": {"reflection_cycles": 1, "multi_seed": []},
+    }
+    r = run_autonomous_explore("X", config=config, max_cycles=1, online_override=False)
+    assert r.get("error") is None
+    assert "cycles" in r
+    assert len(r["cycles"]) >= 1
+
+
+def test_autonomous_multi_seed():
+    from goat_ts_cig.autonomous_explore import run_autonomous_explore
+    config = {
+        "graph": {"path": ":memory:"},
+        "wave": {"ticks": 2, "decay": 0.9, "activation_threshold": 0.5},
+        "online": {"enabled": False, "max_requests_per_run": 30, "timeout_seconds": 10},
+    }
+    r = run_autonomous_explore("A", config=config, max_cycles=1, online_override=False, seeds=["A", "B"])
+    assert r.get("error") is None
+    assert "cycles" in r
+    assert len(r["cycles"]) >= 2

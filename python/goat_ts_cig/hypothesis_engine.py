@@ -52,7 +52,21 @@ def generate_hypotheses(kg, rg=None, id_map=None, similarity_threshold: float = 
             })
 
     if use_llm and config.get("llm"):
-        for h in hypotheses:
-            h["natural_language"] = llm_generate(f"Suggest link: {h['from']} -> {h['to']}")
+        ollama_cfg = config.get("llm_ollama") or {}
+        if ollama_cfg.get("enabled") and ollama_cfg.get("use_for_hypotheses"):
+            try:
+                from goat_ts_cig.llm_ollama import generate as ollama_generate
+                for h in hypotheses:
+                    h["natural_language"] = ollama_generate(
+                        f"Suggest a one-sentence link between concepts: {h.get('from')} and {h.get('to')}.",
+                        ollama_cfg.get("host", "http://127.0.0.1:11434"),
+                        ollama_cfg.get("model", "llama2"),
+                    )
+            except Exception:
+                for h in hypotheses:
+                    h["natural_language"] = llm_generate(f"Suggest link: {h['from']} -> {h['to']}")
+        else:
+            for h in hypotheses:
+                h["natural_language"] = llm_generate(f"Suggest link: {h['from']} -> {h['to']}")
 
     return hypotheses

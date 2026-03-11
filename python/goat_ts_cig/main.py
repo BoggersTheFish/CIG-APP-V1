@@ -20,6 +20,7 @@ def run_pipeline(
     config_overrides: dict | None = None,
     kg=None,
     config: dict | None = None,
+    progress_callback=None,
 ):
     """
     Run the full CIG pipeline and return results for UI/API.
@@ -62,16 +63,20 @@ def run_pipeline(
         node_id = kg.add_node(seed, activation=1.0)
     rg, id_map = kg.to_rust_graph()
     rust_used = rg is not None and len(id_map) > 0
+    ticks = config.get("wave", {}).get("ticks", 10)
+    if progress_callback:
+        progress_callback(0, ticks, "starting")
     if rust_used:
         try:
             seed_rust_id = id_map.index(node_id)
         except ValueError:
             seed_rust_id = 0
-        ticks = config.get("wave", {}).get("ticks", 10)
         decay = config.get("wave", {}).get("decay", 0.9)
         threshold = config.get("wave", {}).get("activation_threshold", 0.5)
         rg.full_ts_cycle(seed_rust_id, ticks, decay, threshold)
         kg.from_rust_graph(rg, id_map)
+    if progress_callback:
+        progress_callback(ticks, ticks, "done")
     try:
         cig_out = cig_generator.generate_all(kg, node_id, rg=rg, id_map=id_map, config=config)
     except Exception as e:

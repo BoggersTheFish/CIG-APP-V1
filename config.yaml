@@ -11,3 +11,16 @@ online:
   enabled: true
   max_requests_per_run: 30
   timeout_seconds: 10
+llm_ollama:
+  enabled: true
+  host: http://127.0.0.1:11434
+  model: llama2
+  use_for_hypotheses: true
+  use_for_autonomous: true
+export:
+  default_dir: data/exports
+advanced_autonomous:
+  reflection_cycles: 3
+  multi_seed: []
+monitoring:
+  show_progress: true

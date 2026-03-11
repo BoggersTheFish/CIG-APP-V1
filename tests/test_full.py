@@ -36,6 +36,8 @@ def test_cli_json_output():
         cwd=root,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=10,
     )
     assert result.returncode == 0
@@ -57,3 +59,26 @@ def test_autonomous_integration_local_only():
     assert result.get("seed") == "AI"
     assert "cycles" in result and len(result["cycles"]) == 2
     assert "cig" in result and "graph" in result
+
+
+def test_export_integration():
+    """Integration: pipeline result + export CSV/JSON (as in Advanced Features UI)."""
+    import tempfile
+    from goat_ts_cig.main import run_pipeline
+    from goat_ts_cig.knowledge_graph import KnowledgeGraph
+    from goat_ts_cig.export_utils import export_graph_csv, export_cig_json
+    result = run_pipeline("export_test", config={"graph": {"path": ":memory:"}, "wave": {"ticks": 2, "decay": 0.9, "activation_threshold": 0.5}})
+    assert result.get("error") is None
+    with tempfile.TemporaryDirectory() as d:
+        kg = KnowledgeGraph(":memory:")
+        kg.add_node("a")
+        kg.add_node("b")
+        kg.add_edge(1, 2, "relates", 1.0)
+        paths = export_graph_csv(kg, d)
+        assert len(paths) == 2 and all(os.path.isfile(p) for p in paths)
+        json_path = os.path.join(d, "out.json")
+        export_cig_json(result, json_path)
+        assert os.path.isfile(json_path)
+        with open(json_path, encoding="utf-8") as f:
+            data = json.load(f)
+        assert data.get("seed") == "export_test"

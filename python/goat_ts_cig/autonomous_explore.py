@@ -44,19 +44,63 @@ def generate_next_queries(
     config: dict | None = None,
 ) -> list[str]:
     """
-    Heuristic query generator for autonomous loop. Cycle 0 returns [seed_label].
-    Later cycles return top activation node labels (up to max_queries).
+    Heuristic / LLM-backed query generator for autonomous loop.
+
+    - Cycle 0 returns [seed_label].
+    - Later cycles return up to max_queries labels.
+    - If llm_ollama.enabled + use_for_autonomous: delegate to local LLM.
+    - Otherwise: use activation-based heuristic, optionally biased by
+      advanced_autonomous.curiosity_bias (0.0–1.0).
     """
     if cycle_index == 0:
         return [seed_label]
+
+    cfg = config or {}
+    ollama_cfg = (cfg.get("llm_ollama") or {})
+    if ollama_cfg.get("enabled") and ollama_cfg.get("use_for_autonomous"):
+        try:
+            from goat_ts_cig.llm_ollama import generate as ollama_generate
+            prompt = (
+                f"Suggest {max_queries} short search queries (one per line) "
+                f"to expand knowledge about: {seed_label}. "
+                "Only output the queries, one per line."
+            )
+            out = ollama_generate(
+                prompt,
+                ollama_cfg.get("host", "http://127.0.0.1:11434"),
+                ollama_cfg.get("model", "llama2"),
+                timeout=30,
+            )
+            lines = [ln.strip() for ln in out.splitlines() if ln.strip() and not ln.strip().startswith("[")]
+            if lines:
+                return lines[:max_queries]
+        except Exception:
+            # Fall back to heuristic if the LLM call fails.
+            pass
+
     data = kg.to_json()
-    nodes = sorted(
-        data.get("nodes", []),
-        key=lambda n: n.get("activation", 0.0),
-        reverse=True,
-    )
+    nodes = data.get("nodes", [])
+
+    # Curiosity bias: 0.0 = favor high activation; 1.0 = favor low/novel nodes.
+    adv = cfg.get("advanced_autonomous") or {}
+    try:
+        curiosity = float(adv.get("curiosity_bias", 0.0))
+    except Exception:
+        curiosity = 0.0
+    curiosity = max(0.0, min(1.0, curiosity))
+
+    def _score(n: dict) -> float:
+        a = float(n.get("activation", 0.0) or 0.0)
+        if curiosity <= 0.0:
+            return a
+        if curiosity >= 1.0:
+            return 1.0 - a
+        # Linear blend between high-activation preference and low-activation preference.
+        return (1.0 - curiosity) * a + curiosity * (1.0 - a)
+
+    nodes_sorted = sorted(nodes, key=_score, reverse=True)
     queries: list[str] = []
-    for n in nodes:
+    for n in nodes_sorted:
         label = (n.get("label") or "").strip()
         if label and label != seed_label and label not in queries:
             queries.append(label)
@@ -74,10 +118,12 @@ def run_autonomous_explore(
     max_cycles: int = 5,
     max_queries_per_cycle: int = 3,
     online_override: bool | None = None,
+    seeds: list[str] | None = None,
 ) -> dict:
     """
     Run autonomous exploration: multiple cycles of query generation, optional web search,
-    ingest into KG, and TS propagation. Returns same structure as run_pipeline plus "cycles" list.
+    ingest into KG, and TS propagation. If seeds is provided, run for each seed in sequence
+    (shared KG). Returns same structure as run_pipeline plus "cycles" list.
     """
     from goat_ts_cig.knowledge_graph import KnowledgeGraph
     from goat_ts_cig.main import run_pipeline
@@ -91,6 +137,11 @@ def run_autonomous_explore(
     except Exception as e:
         return {"error": f"Failed to open graph at {db_path}: {e}", "config": config}
 
+    if seeds is None:
+        seeds = [seed_query]
+    adv = config.get("advanced_autonomous") or {}
+    reflection = int(adv.get("reflection_cycles", 0))
+
     online_cfg = config.get("online") or {}
     use_online = online_cfg.get("enabled", False) and SEARCH_AVAILABLE
     if online_override is not None:
@@ -100,34 +151,84 @@ def run_autonomous_explore(
 
     total_requests = 0
     cycles_log: list[dict] = []
+    result = None
 
-    for cycle in range(max_cycles):
-        queries = generate_next_queries(
-            kg, seed_query, cycle, max_queries_per_cycle, config
-        )
-        ingested_count = 0
-        if use_online:
-            for q in queries:
-                if total_requests >= max_requests:
-                    break
-                results = search_web(q, max_results=5, timeout_seconds=timeout_seconds)
-                for r in results:
-                    text = (r.get("snippet") or r.get("body") or r.get("title") or "").strip()
-                    if text:
-                        kg.ingest_text(text)
-                        ingested_count += 1
-                total_requests += 1
-        cycles_log.append({"queries": queries, "ingested_count": ingested_count})
+    for seed in seeds:
+        current_seed = seed.strip()
+        if not current_seed:
+            continue
+        for cycle in range(max_cycles):
+            queries = generate_next_queries(
+                kg, current_seed, cycle, max_queries_per_cycle, config
+            )
+            ingested_count = 0
+            if use_online:
+                for q in queries:
+                    if total_requests >= max_requests:
+                        break
+                    results = search_web(q, max_results=5, timeout_seconds=timeout_seconds)
+                    for r in results:
+                        text = (r.get("snippet") or r.get("body") or r.get("title") or "").strip()
+                        if text:
+                            kg.ingest_text(text)
+                            ingested_count += 1
+                    total_requests += 1
+            cycles_log.append({"seed": current_seed, "queries": queries, "ingested_count": ingested_count})
 
-        result = run_pipeline(
-            seed_query,
-            config_path=config_path,
-            config=config,
-            kg=kg,
-        )
-        if result.get("error"):
-            result["cycles"] = cycles_log
-            return result
+            result = run_pipeline(
+                current_seed,
+                config_path=config_path,
+                config=config,
+                kg=kg,
+            )
+            if result.get("error"):
+                result["cycles"] = cycles_log
+                return result
+            for _ in range(reflection):
+                result = run_pipeline(current_seed, config=config, kg=kg)
+                if result.get("error"):
+                    result["cycles"] = cycles_log
+                    return result
 
+    if result is None:
+        result = {"seed": seed_query, "config": config, "cig": {}, "graph": kg.to_json()}
     result["cycles"] = cycles_log
+
+    # Optional LLM-based reflection at the end of the autonomous run.
+    if adv.get("llm_reflection"):
+        try:
+            ollama_cfg = (config.get("llm_ollama") or {})
+            if ollama_cfg.get("enabled"):
+                from goat_ts_cig.llm_ollama import generate as ollama_generate
+                summary_lines = []
+                summary_lines.append(f"Autonomous exploration finished for seed '{seed_query}'.")
+                summary_lines.append(f"Total cycles: {len(cycles_log)}.")
+                if cycles_log:
+                    summary_lines.append("Cycles (seed, queries, ingested_count):")
+                    for i, cy in enumerate(cycles_log):
+                        summary_lines.append(
+                            f"  Cycle {i+1}: seed={cy.get('seed')}, "
+                            f"queries={cy.get('queries', [])}, "
+                            f"ingested={cy.get('ingested_count', 0)}"
+                        )
+                prompt = (
+                    "You are reviewing the results of an autonomous knowledge-graph exploration.\n"
+                    + "\n".join(summary_lines)
+                    + "\n\n"
+                    "In 3–6 short bullet points:\n"
+                    "- Summarize what was explored.\n"
+                    "- Point out any obvious gaps or missing angles.\n"
+                    "- Suggest 1–3 concrete next seeds or queries.\n"
+                )
+                reflection_text = ollama_generate(
+                    prompt,
+                    ollama_cfg.get("host", "http://127.0.0.1:11434"),
+                    ollama_cfg.get("model", "llama2"),
+                    timeout=60,
+                )
+                result["reflection_suggestion"] = reflection_text
+        except Exception:
+            # Reflection is optional; ignore errors here.
+            pass
+
     return result
