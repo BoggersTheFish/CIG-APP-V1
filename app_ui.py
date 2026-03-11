@@ -802,7 +802,8 @@ elif step == "3. Run & Explore":
         key="run_seed",
         help="Starting node label for exploration (added to graph if missing).",
     ).strip()
-    st.session_state.run_seed = seed
+    # st.session_state.run_seed = seed   # Removed to fix Streamlit widget conflict
+    # Use the 'seed' variable directly from the text_input return value instead
 
     if "run_autonomous_mode" not in st.session_state:
         st.session_state.run_autonomous_mode = False
