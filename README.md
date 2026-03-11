@@ -41,7 +41,14 @@ python -m streamlit run app_ui.py
 
 (If `streamlit` is on your PATH you can use `streamlit run app_ui.py` instead.)
 
-The UI walks through: **Setup**, **Configuration**, **Run & Explore**, **Optional Tools**, **5. Autonomous Exploration**, and **6. Advanced Features**. In **Run & Explore** you can enable **Autonomous Exploration Mode** to run multiple cycles of query generation, optional web search, ingest, and TS propagation.
+The UI is a **single main page** with:
+
+- **Seed concept** — e.g. "artificial intelligence".
+- **Mode** — **Dry Run (Basic)** (TS propagation, graph, CIG only; no LLM/embeddings/online) or **Full Run (All Features)** (all optional deps required).
+- **Run** — runs the pipeline (or autonomous exploration if "Run autonomous (5 cycles)" is checked in Full mode).
+- **Sidebar** — UI theme (light/dark); **6. Advanced Features** expander: dependency checks (Ollama, Graphviz, Matplotlib), Ollama host/model, graph visualization, CSV/GraphML export, autonomous settings (reflection cycles, multi-seed, curiosity bias, LLM reflection), and Save.
+
+**Verbose monitoring** — checkbox to show progress and post-run stats (node/edge counts). Single pipeline runs execute in a background thread so the UI shows "Running pipeline… (N s)" and a progress phase.
 
 ### Autonomous Exploration (optional)
 
@@ -103,17 +110,31 @@ See `config.yaml` and `.env.example` for all keys.
 python run_tests.py
 ```
 
+Or run pytest directly:
+
+```bash
+python -m pytest tests/ -v
+```
+
+## Config validation
+
+Check `config.yaml` and `.env` integrity (Phase 19):
+
+```bash
+python validate_config.py
+```
+
 ## Benchmark
 
 ```bash
 python benchmark.py
 ```
 
-(Rust extension must be built.)
+(Rust extension must be built.) The script times TS propagation for 500 and 1000 nodes; optional pipeline/export timings are included when available.
 
 ## Improvements
 
-Added license (MIT), sidebar Feature status and one-click installs, export previews and downloads, curiosity bias and LLM reflection for autonomous mode, dashboard (activation overview), scaling notes in UI, theme toggle, human-in-loop pause, embeddings (optional), vector search (optional), PDF ingestion, GraphML export, undo/backup. Later: pipeline run feedback (“Running pipeline…” while non-autonomous run executes), Streamlit session-state fixes, **developer mode** in Setup (debug menus in all tabs).
+Single-page UI (Dry Run / Full Run), Advanced Features in sidebar (Ollama, graph viz, CSV/GraphML export, autonomous settings, monitoring). Progress bar and background-thread run; verbose monitoring. Phases 13–19: Advanced Features shell, Ollama adapter, graph_viz/export_utils, autonomous reflection/multi-seed/curiosity bias, progress callback. Optional: embeddings, vector search, PDF ingestion, GraphML, undo/backup; theme toggle. Earlier: license (MIT), sidebar Feature status and one-click installs, export previews and downloads, curiosity bias and LLM reflection for autonomous mode, dashboard (activation overview), scaling notes in UI, theme toggle, human-in-loop pause, embeddings (optional), vector search (optional), PDF ingestion, GraphML export, undo/backup. Later: pipeline run feedback (“Running pipeline…” while non-autonomous run executes), Streamlit session-state fixes, **developer mode** in Setup (debug menus in all tabs).
 
 ## License
 

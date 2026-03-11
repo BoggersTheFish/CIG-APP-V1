@@ -100,7 +100,7 @@ Text structure:
 - **Phase 16: Export options** (Steps 72–74): export_utils (CSV/JSON), UI buttons and path inputs.
 - **Phase 17: Advanced autonomous** (Steps 75–78): Reflection cycles and multi-seed in autonomous_explore and config; UI in Advanced Features.
 - **Phase 18: Basic monitoring** (Steps 79–82): Progress callback or st.fragment, toggle in UI, minimal progress display during run.
-- **Phase 19: Testing and docs** (Steps 83–86): Tests for new modules, README/ENHANCEMENTS section, config validation.
+- **Phase 19: Testing and docs** (Steps 83–86): Tests for new modules, README/ENHANCEMENTS section, config validation. **Completed:** Unit tests for llm_ollama, graph_viz, export_utils, autonomous (reflection, multi_seed, curiosity_bias), progress_callback in test_full; `validate_config.py` for config.yaml/.env integrity; README updated for single-page UI; benchmark.py documents optional pipeline/export timings.
 
 ---
 

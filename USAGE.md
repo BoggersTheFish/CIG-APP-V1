@@ -1,6 +1,8 @@
 ### Usage Guide for CIG-APP
 **(GUI Usage and Terminal Usage – detailed but easy to follow)**
 
+**Current UI (v1.0-alpha):** The Streamlit app uses a **single main page**: seed input, **Dry Run (Basic)** or **Full Run (All Features)** mode, optional "Run autonomous (5 cycles)" for Full mode, and **Run**. The sidebar has the theme toggle and **6. Advanced Features** (dependency checks, Ollama host/model, graph visualization, CSV/GraphML export, autonomous settings, Save). Single pipeline runs show progress in a background thread. See README for a short overview; the sections below also describe config and CLI in detail.
+
 ---
 
 ## 1. Prerequisites (for both GUI and terminal)
