@@ -1,10 +1,12 @@
 # Changelog
 
 ## v1.0-alpha (March 11, 2026)
-
-- Added MIT license
-- UI polish: sidebar deps status, one-click installs, theme toggle
-- Autonomous enhancements: human-in-loop, reflection, curiosity bias
-- New: embeddings (sentence-transformers mini), sqlite-vss vector search
-- New: PDF text ingestion, GraphML export, undo/backup
+- MIT license
+- Complete docs (README/USAGE/SCALING/OPTIMIZATION)
+- UI polish: sidebar deps/installs, theme toggle, export previews
+- Autonomous enhancements: human-in-loop, reflection cycles, curiosity bias
+- Optional advanced: Ollama LLM, graph viz/export (PNG/CSV/JSON/GraphML)
+- Embeddings (sentence-transformers mini) + sqlite-vss vector search
+- PDF text ingestion (PyPDF2)
+- Undo/backup before autonomous runs
 - Expanded tests & perf notes
