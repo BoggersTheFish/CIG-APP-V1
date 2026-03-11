@@ -813,7 +813,8 @@ elif step == "3. Run & Explore":
         key="run_autonomous_mode",
         help="Run multiple cycles: generate queries → optional web search → ingest → TS propagation.",
     )
-    st.session_state.run_autonomous_mode = autonomous_mode
+    # st.session_state.run_autonomous_mode = autonomous_mode   # Removed to fix Streamlit widget conflict
+    # Use the 'autonomous_mode' variable directly from the toggle/checkbox return value instead
     online_ok = False
     run_local_only = True
     if autonomous_mode:
