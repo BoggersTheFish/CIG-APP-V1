@@ -1053,14 +1053,96 @@ elif step == "5. Autonomous Exploration":
     max_cycles = st.slider("Number of cycles", 1, 10, 5, key="max_cycles")
     max_q = st.slider("Max queries per cycle", 1, 5, 3, key="max_q")
     use_online_5 = st.checkbox("Use online search (if available)", value=bool(online_ok), key="use_online_5")
+    human_loop = st.toggle("Human-in-Loop (pause after each cycle)", value=False, key="human_loop_5")
 
     show_progress_5 = (config.get("monitoring") or {}).get("show_progress", False)
     adv_5 = config.get("advanced_autonomous") or {}
     seeds_5 = [seed_auto.strip()] + (adv_5.get("multi_seed") or [])
+    reflection_5 = int(adv_5.get("reflection_cycles") or 0)
+    use_online_val = use_online_5 and (online_ok or not run_local_only_5)
+    max_requests_5 = (config.get("online") or {}).get("max_requests_per_run", 30)
+    timeout_5 = (config.get("online") or {}).get("timeout_seconds", 10)
+
+    # Human-in-loop: run one cycle at a time and wait for Continue
+    from goat_ts_cig.autonomous_explore import run_autonomous_one_cycle
+    hilo = st.session_state.get("autonomous_human_loop") or {}
+    if human_loop and hilo and st.button("Continue to next cycle", key="hilo_continue", disabled=_is_busy()):
+        _set_busy(True)
+        try:
+            c_cycle = hilo.get("cycle", 0)
+            c_seed_idx = hilo.get("seed_idx", 0)
+            c_seeds = hilo.get("seeds", seeds_5)
+            c_seed = c_seeds[c_seed_idx] if c_seed_idx < len(c_seeds) else seed_auto
+            result, total_req, cycles_log = run_autonomous_one_cycle(
+                CONFIG_PATH, config, c_seed, c_cycle, max_q, use_online_val,
+                max_requests_5, timeout_5, hilo.get("total_requests", 0), hilo.get("cycles_log", []), reflection_5,
+            )
+            if result.get("error"):
+                st.session_state["last_autonomous_result"] = result
+                st.session_state["autonomous_human_loop"] = {}
+            else:
+                next_cycle = c_cycle + 1
+                next_seed_idx = c_seed_idx
+                if next_cycle >= max_cycles:
+                    next_cycle = 0
+                    next_seed_idx += 1
+                if next_seed_idx >= len(c_seeds):
+                    result["cycles"] = cycles_log
+                    if adv_5.get("llm_reflection"):
+                        try:
+                            from goat_ts_cig.llm_ollama import generate as ollama_generate
+                            ollama_cfg = (config.get("llm_ollama") or {})
+                            if ollama_cfg.get("enabled"):
+                                prompt = f"Autonomous exploration finished. Cycles: {cycles_log}. Summarize, note gaps, suggest 1-3 next seeds."
+                                result["reflection_suggestion"] = ollama_generate(
+                                    prompt, ollama_cfg.get("host", "http://127.0.0.1:11434"),
+                                    ollama_cfg.get("model", "llama2"), timeout=60,
+                                )
+                        except Exception:
+                            pass
+                    st.session_state["last_autonomous_result"] = result
+                    st.session_state["autonomous_human_loop"] = {}
+                else:
+                    st.session_state["autonomous_human_loop"] = {
+                        "cycle": next_cycle, "seed_idx": next_seed_idx, "seeds": c_seeds,
+                        "total_requests": total_req, "cycles_log": cycles_log,
+                    }
+                    st.session_state["last_autonomous_result"] = result
+            _append_log(f"Human-in-loop: cycle {c_cycle + 1} done.")
+        finally:
+            _set_busy(False)
+        st.rerun()
 
     if st.button("Run autonomous exploration", type="primary", key="run_auto", disabled=_is_busy()):
         if not seed_auto:
             st.error("Enter a seed query.")
+        elif human_loop:
+            _set_busy(True)
+            try:
+                _append_log("Starting: autonomous exploration (human-in-loop).")
+                st.session_state["autonomous_human_loop"] = {"cycle": 0, "seed_idx": 0, "seeds": seeds_5, "total_requests": 0, "cycles_log": []}
+                current_seed = seeds_5[0]
+                result, tr, cl = run_autonomous_one_cycle(
+                    CONFIG_PATH, config, current_seed, 0, max_q, use_online_val,
+                    max_requests_5, timeout_5, 0, [], reflection_5,
+                )
+                st.session_state["last_autonomous_result"] = result
+                if result.get("error"):
+                    st.session_state["autonomous_human_loop"] = {}
+                elif (max_cycles > 1) or (len(seeds_5) > 1):
+                    next_c, next_s = 1, 0
+                    if next_c >= max_cycles:
+                        next_c, next_s = 0, 1
+                    if next_s < len(seeds_5):
+                        st.session_state["autonomous_human_loop"] = {"cycle": next_c, "seed_idx": next_s, "seeds": seeds_5, "total_requests": tr, "cycles_log": cl}
+                    else:
+                        st.session_state["autonomous_human_loop"] = {}
+                else:
+                    st.session_state["autonomous_human_loop"] = {}
+                _append_log("Human-in-loop: cycle 1 done.")
+            finally:
+                _set_busy(False)
+            st.rerun()
         else:
             _set_busy(True)
             try:
@@ -1069,13 +1151,7 @@ elif step == "5. Autonomous Exploration":
                 with st.status("Running autonomous exploration...", expanded=True):
                     try:
                         from goat_ts_cig.autonomous_explore import run_autonomous_explore
-                        online_override = None
-                        if not online_ok or run_local_only_5:
-                            online_override = False
-                        elif not use_online_5:
-                            online_override = False
-                        else:
-                            online_override = True
+                        online_override = use_online_val
                         result = run_autonomous_explore(
                             seed_auto,
                             config_path=CONFIG_PATH,

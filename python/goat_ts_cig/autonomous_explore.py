@@ -232,3 +232,53 @@ def run_autonomous_explore(
             pass
 
     return result
+
+
+def run_autonomous_one_cycle(
+    config_path: str | None,
+    config: dict,
+    current_seed: str,
+    cycle_index: int,
+    max_queries_per_cycle: int,
+    use_online: bool,
+    max_requests: int,
+    timeout_seconds: int,
+    total_requests: int,
+    cycles_log: list,
+    reflection: int,
+) -> tuple[dict, int, list]:
+    """
+    Run exactly one autonomous cycle (queries, optional search/ingest, pipeline, reflection).
+    Returns (result, new_total_requests, new_cycles_log).
+    """
+    from goat_ts_cig.knowledge_graph import KnowledgeGraph
+    from goat_ts_cig.main import run_pipeline
+    from goat_ts_cig.search_fetcher import search_web
+
+    db_path = config.get("graph", {}).get("path", "data/knowledge_graph.db")
+    kg = KnowledgeGraph(db_path)
+    queries = generate_next_queries(kg, current_seed, cycle_index, max_queries_per_cycle, config)
+    ingested_count = 0
+    if use_online:
+        for q in queries:
+            if total_requests >= max_requests:
+                break
+            results = search_web(q, max_results=5, timeout_seconds=timeout_seconds)
+            for r in results:
+                text = (r.get("snippet") or r.get("body") or r.get("title") or "").strip()
+                if text:
+                    kg.ingest_text(text)
+                    ingested_count += 1
+            total_requests += 1
+    cycles_log = list(cycles_log) + [{"seed": current_seed, "queries": queries, "ingested_count": ingested_count}]
+    result = run_pipeline(current_seed, config_path=config_path, config=config, kg=kg)
+    if result.get("error"):
+        result["cycles"] = cycles_log
+        return result, total_requests, cycles_log
+    for _ in range(reflection):
+        result = run_pipeline(current_seed, config=config, kg=kg)
+        if result.get("error"):
+            result["cycles"] = cycles_log
+            return result, total_requests, cycles_log
+    result["cycles"] = cycles_log
+    return result, total_requests, cycles_log
