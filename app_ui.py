@@ -873,7 +873,8 @@ elif step == "3. Run & Explore":
     if "run_ticks_override_val" not in st.session_state:
         st.session_state.run_ticks_override_val = 10
     override_ticks = st.checkbox("Override wave ticks for this run", value=st.session_state.run_override_ticks, key="run_override_ticks")
-    st.session_state.run_override_ticks = override_ticks
+    # st.session_state.run_override_ticks = override_ticks   # Removed to fix Streamlit widget conflict
+    # Use the 'override_ticks' variable directly from the number_input/slider/checkbox return value instead
     ticks_override = None
     if override_ticks:
         ticks_override = st.number_input("Ticks", min_value=1, max_value=500, value=st.session_state.run_ticks_override_val, key="run_ticks_override_val")
