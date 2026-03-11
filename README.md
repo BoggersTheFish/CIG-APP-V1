@@ -121,4 +121,4 @@ This project is licensed under the MIT License — see [LICENSE](LICENSE). Copyr
 
 ## Recommended GitHub Topics
 
-knowledge-graph streamlit rust-python local-ai thinking-waves sqlite ollama vector-search autonomous-exploration embeddings pdf-ingestion
+Apply these GitHub topics via repo settings: knowledge-graph streamlit rust-python local-ai thinking-waves sqlite ollama vector-search autonomous-exploration embeddings pdf-ingestion
